@@ -1,0 +1,7 @@
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - miller=6.2.0
+    - bcftools=1.14
+    - samtools=1.14

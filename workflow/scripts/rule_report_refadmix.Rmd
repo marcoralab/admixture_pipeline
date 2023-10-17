@@ -1,0 +1,301 @@
+---
+title: "Admixture filtering for LAI Reference"
+author: "Brian Fulton-Howard"
+date: "2023-05-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(ggplot2.discrete.fill = pals::cols25(25))
+
+suppressPackageStartupMessages(library(dplyr))
+library(readr)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(ggforce)
+library(ggrepel)
+
+if (exists("snakemake")) {
+  load(snakemake@input[[1]])
+} else {
+  load("../../reference_proc/hgdp_1kg.admixture.rda")
+}
+```
+
+# Processing
+Before interpreting the results from ADMIXTURE, we did the following:
+
+*  Remove samples without a population inference from gnomAD or without high_quality set to TRUE.
+*  Make a column (`spop`) by doing the following with the populations inferred by gnomAD:
+   *  Merge "nfe" and "fin" into "EUR"
+   *  Move oceanic subjects from "oth" to their own "OCE" category.
+   *  Capitalize all other superpopulations.
+*  Make a column (`spop_checked`) where the original superpopulations match the inferred superpopulations:
+   *  The new `spop` column is used for inferred superpopulation.
+   *  The `genetic_region` column is used for original superpopulation.
+   *  "CSA" in `genetic_region` is considered a match to "SAS" in `spop`. "SAS" is used in the new column. 
+   *  All subjects where there is no match are set to "NA"
+
+# Cluster labeling
+
+Before labeling clusters, Middle Eastern references are removed. The checked superpopulation labels are used for this labeling process.
+
+Each cluster is assigned a superpopulation based on what superpopulation that cluster has the highest average proportion within.
+
+```{r label_clusters, echo=FALSE, fig.height=9, fig.width=7, cache=FALSE}
+heatmap(heatmap_mat)
+```
+
+```{r prep_plotting, include=FALSE}
+plot_admix <- function(x, by = cluster_cols, poplabel = TRUE) {
+  stripangle <- 90
+  tbl_long <- x |>
+    pivot_longer(all_of(by), names_to = "Cluster", values_to = "prop" )
+
+  if (all(str_detect(by, "^k\\d+$"))) {
+    tbl_long <- mutate(tbl_long, Cluster = assign_cname_vec[Cluster])
+  }
+
+  if ("genetic_region" %in% names(x)) {
+    tbl_use <- tbl_long |>
+      mutate(spop = ifelse(genetic_region == "CSA", "SAS", genetic_region))
+  } else {
+    tbl_use <- tbl_long
+  }
+
+  if (!poplabel) {
+    pop_number <- x |>
+      group_by(spop) |>
+      mutate(label_n = sprintf("%s\n%i", spop, n())) |>
+      ungroup() |>
+      select(IID, label_n)
+
+    tbl_use <- tbl_use |>
+      arrange(admixture_super_pop_max, -max_spop_prop) |>
+      left_join(pop_number, by = "IID") |>
+      mutate(spop = label_n,
+             IID = forcats::fct_inorder(as.character(IID)))
+    stripangle <- 0
+  }
+
+  plt <- ggplot(tbl_use, aes(x = IID, y = prop, fill = Cluster)) +
+    geom_bar(position = "fill", stat = "identity", width = 1) +
+    theme_classic() +
+    labs(x = "Individual", y = "Global Ancestry", color = "Cluster") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.title.x = element_blank(),
+      panel.grid.major.x = element_blank(),
+      strip.text.x = element_text(angle = stripangle))
+  if (poplabel) {
+    plt + ggh4x::facet_nested(~ spop + pop, switch = "x",
+                              scales = "free", space = "free")
+  } else if(!all(is.na(x$spop))) {
+    plt + facet_grid(~ spop, switch = "x",
+                     scales = "free", space = "free")
+  } else {
+    plt + facet_grid(~ admixture_super_pop_max, switch = "x",
+                     scales = "free", space = "free")
+  }
+}
+
+plot_map <- function(df_pop, seed, force_push = 1000000, force_pull = 10) {
+  findboxes <- function(df, xcol, ycol, size_x, size_y,
+                        xlimit = c(-Inf, Inf), ylimit = c(-Inf, Inf),
+                        force_push = 1, force_pull = 1, maxiter = 200000) {
+
+    boxdf <- tibble(
+      x1 = df[[xcol]] - (size_x / 2),
+      y1 = df[[ycol]] - (size_y / 2),
+      x2 = df[[xcol]] + (size_x / 2),
+      y2 = df[[ycol]] + (size_y / 2))
+
+    boxmatrix <- as.matrix(boxdf)
+
+    pointmatrix <- df[c(xcol,ycol)] |>
+      as.matrix()
+
+    ggrepel:::repel_boxes2(data_points = pointmatrix,
+                           point_padding_x = 0.25,
+                           point_padding_y = 0,
+                           boxes = boxmatrix,
+                           xlim = xlimit,
+                           ylim = ylimit,
+                           force_push = force_push * 1e-6,
+                           force_pull = force_pull * 1e-2,
+                           max_iter = maxiter,
+                           point_size = rep_along(df[[xcol]], 0.1),
+                           hjust = rep_along(df[[xcol]], 0.5),
+                           vjust = rep_along(df[[xcol]], 0.5),
+                           max_overlaps = Inf) |>
+      rename(x_moved = x, y_moved = y) |>
+      bind_cols(boxdf) |>
+      add_column(df, .before = 1)
+  }
+
+  reduce_end <- function(x1, y1, x2, y2, r) {
+    x <- x2 - x1
+    y <- y2 - y1
+    mag <- sqrt(x ^ 2 + y ^ 2)
+    list(
+      x = x2 - r * x / mag,
+      y = y2 - r * y / mag
+    )
+  }
+
+  pie_radius <- function(n) log(n)
+  pie_radius_inner <- function(n) log(n) / 2.5
+
+  set.seed(seed)
+
+  mapdata_raw <-
+    df_pop |>
+    group_by(pop) |>
+    summarise(across(matches("^k\\d+$"), mean),
+              across(all_of(c("latitude", "longitude")),
+                     \(x) mean(as.numeric(x))),
+              n = n()) |>
+    rename(all_of(assign_cname_vec_i))
+
+  mapdata <- mapdata_raw |>
+    findboxes("longitude", "latitude",
+              log(mapdata_raw$n) * 2, log(mapdata_raw$n) * 2,
+              c(-180, 180), c(-90, 90), 1000000, 10) |>
+    mutate(lineend = transpose(reduce_end(
+      longitude, latitude, x_moved, y_moved, pie_radius_inner(n)))) |>
+    tidyr::unnest_wider(col = lineend, names_sep = "_")
+
+  mapdata |>
+    ggplot() +
+    geom_sf(data = world, fill = "gray92", color = "gray80") +
+    geom_link(aes(x = longitude, y = latitude,
+                  xend = lineend_x, yend = lineend_y),
+              arrow = arrow(angle = 30, length = unit(3, "points"),
+                            ends = "first", type = "open")) +
+    geom_arc_bar(
+      data = \(x) {
+        pivot_longer(x, cols = all_of(unname(assign_cname_vec)),
+                     names_to = "cluster", values_to =  "amount")
+      },
+      aes(x0 = x_moved, y0 = y_moved, r0 = pie_radius_inner(n),
+          r = pie_radius(n), amount = amount, fill = cluster),
+      stat = "pie", color = NA) +
+    geom_circle(aes(x0 = x_moved, y0 = y_moved, r = pie_radius(n)),
+                fill = NA, color = "black", size = 0.2) +
+    geom_circle(aes(x0 = x_moved, y0 = y_moved, r = pie_radius_inner(n)),
+                fill = NA, color = "black", size = 0.2) +
+    theme_classic() +
+    coord_sf(expand = FALSE) +
+    ggtitle("Map of average cluster proportions in each population") + 
+    xlab("Longitude") + ylab("Latitude")
+}
+```
+
+```{r filter_ref, include=FALSE}
+admix_noref <- filter(out_admix, partition != "sample")
+```
+
+# Reference plots
+
+Below is a plot of the cluster proportions for all individuals who were assigned a superpopulation in gnomAD. The original superpopulation and population labels are used here.
+
+```{r cplot_unfilt_pop1, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(genetic_region %in% c("AFR", "AMR", "EUR")) |>
+  plot_admix() + ggtitle("Admixture Plot by Cluster (AFR, AMR and EUR)")
+```
+
+```{r cplot_unfilt_pop2, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(!(genetic_region %in% c("AFR", "AMR", "EUR"))) |>
+  plot_admix() + ggtitle("Admixture Plot by Cluster (not AFR, AMR or EUR)")
+```
+
+This is a map of average cluster proportions in each population:
+
+```{r map, echo=FALSE, fig.width = 14, fig.height = 7.5, warning = FALSE, cache = TRUE}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+plt <- plot_map(admix_noref, 1007)
+
+plt
+```
+
+For simplified viewing, here is a cluster plot broken down only by superpopulation and with summed superpopulation clusters:
+
+```{r cplot_unfilt_spop, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+filter_output <- \(tbl, max_prop) {
+  filter(tbl, !is.na(spop_checked) &
+           spop_checked == as.character(admixture_super_pop_max) &
+           spop_checked != "OCE" &
+           max_spop_prop >= max_prop)
+}
+
+admix_noref |>
+  filter_output(0) |>
+  plot_admix(by = superpops, poplabel = FALSE) +
+  ggtitle("Admixture Plot by Continental Ancestry (no admixture filter)")
+```
+
+Only individuals for whom gnomAD population matches ADBIXTURE population are shown, and Oceanic references are removed.
+
+# Target
+
+```{r filter_noref, include=FALSE}
+admix_noref <- filter(out_admix, partition == "sample")
+```
+
+```{r cplot_samp_pop1, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(admixture_super_pop_max %in% c("AFR", "AMR", "EUR")) |>
+  plot_admix(poplabel = FALSE) +
+    ggtitle("Admixture Plot by Cluster (AFR, AMR and EUR)")
+```
+
+```{r cplot_samp_pop2, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(!(admixture_super_pop_max %in% c("AFR", "AMR", "EUR"))) |>
+  plot_admix(poplabel = FALSE) +
+    ggtitle("Admixture Plot by Cluster (not AFR, AMR or EUR)")
+```
+
+Below is a plot with varying maximum ADMIXTURE superpopulation proportion filters. After filtering, the following sample sizes remain:
+
+```{r filt_sampsize, echo=FALSE, fig.width = 9, fig.height = 7, warning = FALSE, cache = TRUE}
+c(0.75, 0.8, 0.85, 0.9, 0.95) |>
+  map_dfr(\(prop) {
+    filter(admix_noref, max_spop_prop >= prop) |>
+      count(admixture_super_pop_max) |>
+      mutate("Proportion filter" = prop)
+  }) |>
+  rename(Superpopulation = admixture_super_pop_max) |>
+  ggplot() + theme_bw() +
+  geom_line(aes(x = `Proportion filter`, y = n, color = Superpopulation)) +
+  scale_y_continuous(limits = c(0, 1000), breaks = seq(0, 1000, 100))
+```
+
+Here are the cluster plots at various proportion filters:
+
+```{r cplot_filt_80, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(max_spop_prop >= 0.8) |>
+  plot_admix(poplabel = FALSE) +
+  ggtitle("Admixture Plot by Continental Ancestry (admixture filter >= 0.8)")
+```
+
+```{r cplot_filt_90, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
+admix_noref |>
+  filter(max_spop_prop >= 0.9) |>
+  plot_admix(poplabel = FALSE) +
+  ggtitle("Admixture Plot by Continental Ancestry (admixture filter >= 0.9)")
+```
+

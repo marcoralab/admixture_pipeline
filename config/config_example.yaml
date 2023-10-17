@@ -1,0 +1,94 @@
+indir: "/some/directory"
+datasets:
+  # BioMe_array-regeneron_GSA:
+  #    infile: '{indir}/regeneron_GSA_hg19.bed'
+  #    build: hg19
+  #    array: True
+  #    filters: '--chr 17'
+  #    impute: False
+  # BioMe_array-sema4_GDA:
+  #    infile: '{indir}/sema4_GDA_hg19.bed'
+  #    build: hg19
+  #    array: True
+  #    filters: '--chr 17'
+  #    impute: False
+  # NYSCF_array:
+  #    infile: input/NYSCF_MSSM_Chr17.ped
+  #    build: hg19
+  #    array: True
+  #    impute: True
+  # test_vcf:
+  #    infile: input/test.vcf.gz
+  #    build: hg38
+  #    array: False
+  #    impute: False
+  #    phased: False
+  # test_vcf_phased:
+  #    infile: input/test.vcf.gz
+  #    build: hg38
+  #    array: False
+  #    impute: False
+  #    phased: True
+  # ADSP-WGS-r4:
+  #   infile: /sc/arion/projects/load/data-ext/ADSP/ADSP_Umbrella_ng00067.v10/geno/gcad.qc.compact_filtered.r4.wgs.36361.GATK.2023.06.06.biallelic.genotypes.chr{chrom}.ALL.vcf.bgz
+  #   build: hg38
+  #   array: False
+  #   filters: -i 'F_MISSING < 0.05 && FILTER = "PASS" && INFO/AF[0] >= 0.05 && INFO/AF[0] <= 0.95 && VFLAGS_One_subgroup = 0 && ABHet_One_subgroup > 0.25 && ABHet_One_subgroup < 0.75'
+
+imputation:
+  imputation:
+    default:
+      token: your_token_here 
+  
+  # Select chromosomes you want to upload
+  #  separate ranges with ":" and listed chromosomes with ","
+  #  You can put both in the same string. Use M for mitochondra
+  # Options are 1:22,X,Y,M
+  
+  outputs: # Comment out any line with outputs you don't want
+    - stat_report # A report of imputation quality
+    - vcf_bycohort # Bgzipped VCF files for each cohort
+    # - vcf_merged # A bgzipped VCF with all cohorts
+    # - bgen_bycohort # Binary oxford filesets for each cohort
+    # - bgen_merged # A binary oxford fileset with all cohorts
+    # - plink_bycohort # Binary plink filesets for each cohort
+    # - plink_merged # A binary plink fileset with all cohorts
+  
+  # Subject and variant level QC thresholds to apply before imputation
+  preqc:
+    hwe: 1e-20
+    #Hardy-Weinberg Equilibrium Cutoff ("false" to skip)
+    #MAF Cutoff ("false" to skip)
+    maf: false
+    #Variant level missingness cutoff
+    geno: 0.05
+    #Subject level missingness cutoff
+    mind: 0.05
+  
+  # variant level QC thresholds to apply after imputation
+  postqc:
+    # MAF Cutoff between common and rare
+    maf: 0.005
+    # Rsq to use with common variants
+    rsq: 0.3
+    # Rsq to use with rare variants (set to NA to use rsq as hard cutoff)
+    rsq2: NA
+    # Number of SNPs of each type (Imputed, Typed) to sample for figures
+    sampsize: 100000
+  
+  # Sample filtering
+  
+  chr_callrate: False
+  chunk_callrate: True
+  
+  # filename of samples to include (plink --keep)
+  include_samp:
+  
+  # filename of samples to exclude (plink --remove)
+  exclude_samp:
+  
+  # --keep accepts a space/tab-delimited text file with
+  # family IDs in the first column and within-family IDs
+  # in the second column, and removes all unlisted samples
+  # from the current analysis. --remove does the same for
+  # all listed samples.

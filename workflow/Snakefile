@@ -1,0 +1,509 @@
+from snakemake.utils import min_version
+min_version("7.0")
+
+import re
+from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
+from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+
+from urllib.request import urlopen
+from urllib.error import URLError
+
+try:
+    response = urlopen('https://www.google.com/', timeout=10)
+    iconnect = True
+except URLError as ex:
+    iconnect = False
+
+
+configfile: "config/config.yaml"
+
+class dummyprovider:
+    def remote(string_, allow_redirects="foo", immediate_close="bar"):
+        return string_
+
+if iconnect: # and not ('nointernet' in config and config['nointernet']):
+    FTP = FTPRemoteProvider()
+    HTTP = HTTPRemoteProvider()
+else:
+    FTP = dummyprovider
+    HTTP = dummyprovider
+
+conf = config['datasets']
+
+def get_build(conf, dataset):
+    if conf[dataset].get('impute', False):
+        return 'hg38'
+    else:
+        return conf[dataset]['build']
+
+def get_intype(conf, dataset):
+    fname = conf[dataset]['infile']
+    if re.match(r'.+\.vcf(\.b{0,1}gz)*$', fname):
+        return 'vcf'
+    elif re.match(r'.+\.bcf$', fname):
+        return 'bcf'
+    elif re.match(r'.+\.bed$', fname):
+        return 'bplink'
+    elif re.match(r'.+\.ped$', fname):
+        return 'plink'
+    else:
+        raise Exception('Unrecognized file type')
+
+def get_in(conf, dataset):
+    fname = conf[dataset]['infile']
+    fname = fname.format(indir=config['indir'], chrom='{chrom}') #allow
+    intype = get_intype(conf, dataset)
+    if intype in ['plink', 'bplink']:
+        return fname[0:-4]
+    else:
+        return fname
+
+ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
+             "hg38": "reference/human_g1k_GRCh38.fasta"}
+
+DATASETS = [x for x in conf.keys()]
+BUILD = [get_build(conf, x) for x in DATASETS] # hg19 or hg38
+array = [conf[x]['array'] for x in DATASETS]
+filter_dict = {x: conf[x].get('filters', '') for x in DATASETS}
+input_type_dict = {x: get_intype(conf, x) for x in DATASETS}
+input_dict = {x: get_in(conf, x) for x in DATASETS}
+impute_datasets = [x for x in DATASETS if conf[x].get('impute', False)]
+impute_build = [conf[x]['build'] for x in DATASETS if conf[x].get('impute', False)]
+if len(impute_build) > 0:
+    assert len(set(impute_build)) == 1, "There can only be one build for imputation"
+    impute_build = impute_build[0]
+    assert impute_build in ['hg19', 'hg38']
+else:
+    impute_build = 'hg19'
+impute_fasta = ref_fasta[impute_build]
+
+def dict_settings(setting):
+    return {k: v for k, v in zip(DATASETS, setting)}
+
+build_dict = dict_settings(BUILD)
+
+wildcard_constraints:
+    build='hg(19|38)',
+    #cohort='|'.join(DATASETS)
+
+rule all:
+    input:
+        expand('results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html',
+               zip, admixstem=['gnomad-hgdp-1kg' for x in DATASETS], build=BUILD, cohort=DATASETS),
+
+def get_intype(wc):
+    intype_ =  wc['inputtype']
+    if intype_ == 'bplink':
+        return 'bfile'
+    elif intype_ == 'plink':
+        return 'file'
+    else:
+        raise Exception('Invalid input type')
+
+def get_infile(wc):
+    intype_ = wc['inputtype']
+    stem = input_dict[wc['cohort']]
+    if intype_ == 'bplink':
+        return multiext(stem, ".bed", ".bim", ".fam")
+    elif intype_ == 'plink':
+        return multiext(stem, ".ped", ".map")
+    else:
+        raise Exception('Invalid input type')
+
+rule plink_filter:
+    input: get_infile
+    output: temp(multiext("intermediate/start/{cohort}.{build}.from{inputtype}", ".bed", ".bim", ".fam"))
+    params:
+        ins = lambda wc: input_dict[wc['cohort']],
+        out = "intermediate/start/{cohort}.{build}.from{inputtype}",
+        filt = lambda wc: filter_dict[wc['cohort']],
+        ftype = get_intype
+    resources:
+        mem_mb = 10000,
+        time_min = 30
+    conda: "envs/plink.yaml"
+    shell:
+        """
+plink --{params.ftype} {params.ins} {params.filt} --make-bed --out {params.out}
+"""
+
+def preimpute_files(wc):
+    ds = wc['cohort']
+    intype = input_type_dict[ds]
+    stem = expand("intermediate/start/{cohort}.{build}.from{inputtype}",
+        inputtype=intype, build=impute_build, cohort=ds)[0]
+    return {x: stem + '.' + x for x in ['bed', 'bim', 'fam']}
+
+rule link_impute:
+    input: unpack(preimpute_files)
+    output:
+        bed = "intermediate/impute_start/{cohort}.bed",
+        bim = "intermediate/impute_start/{cohort}.bim",
+        fam = "intermediate/impute_start/{cohort}.fam"
+    resources:
+        mem_mb = 100,
+        time_min = 30
+    shell:
+        '''
+cp {input.bed} {output.bed}
+cp {input.bim} {output.bim}
+cp {input.fam} {output.fam}
+'''
+    
+
+config_impute = config["imputation"]
+config_impute["chroms"] = "1:22"
+config_impute["directory"] = "intermediate/impute_start/"
+config_impute["SAMPLES"] = impute_datasets
+config_impute["out_dir"] = "output/imputation"
+config_impute['ref'] = impute_fasta
+config_impute['imputation']['default']['build'] = impute_build
+config_impute['imputation']['default']['refpanel'] = 'topmed-r2'
+# snakefile_impute = 'modules/imputePipeline/workflow/Snakefile'
+snakefile_impute = github("marcoralab/imputePipeline", path="workflow/Snakefile", tag="v0.4.10")
+#snakefile_shapeit = github("marcoralab/shapeit5_pipeline", path="workflow/Snakefile", tag="866c2e3")
+snakefile_shapeit = 'modules/shapeit5_pipeline/workflow/Snakefile'
+
+module imputation:
+    snakefile: snakefile_impute
+    config: config_impute
+
+use rule * from imputation as imputation_*
+
+rule Sample_Flip:
+    input:
+        bim = "intermediate/start/{cohort}.{build}.from{inputtype}" + '.bim',
+        bed = "intermediate/start/{cohort}.{build}.from{inputtype}" + '.bed',
+        fam = "intermediate/start/{cohort}.{build}.from{inputtype}" + '.fam',
+        fasta = lambda wc: ref_fasta[wc["build"]]
+    output:
+        temp(multiext("intermediate/cohort_proc/{cohort}.{build}.from{inputtype}_flipped", ".bim", ".bed", ".fam"))
+    params:
+        stem = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}"
+    resources:
+        mem_mb = 10000,
+        time_min = 30
+    container: 'docker://befh/flippyr:0.5.3'
+    shell: "flippyr -p {input.fasta} -o {params.stem} {input.bim}"
+
+# Recode sample plink file to vcf
+rule plink_vcf:
+    input:
+        bed = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}_flipped.bed",
+        bim = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}_flipped.bim",
+        fam = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}_flipped.fam"
+    output: temp("intermediate/cohort_proc/{cohort}.{build}.from{inputtype}.vcf.gz")
+    params:
+        out = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}"
+    resources:
+        mem_mb = 10000,
+        time_min = 30
+    conda: "envs/plink.yaml"
+    shell:
+        '''
+plink --bed {input.bed} --bim {input.bim} --fam {input.fam} --recode vcf bgz \
+  --real-ref-alleles --out {params.out}
+'''
+
+def choose_vcf_initial(wc):
+    ds = wc['cohort']
+    intype = input_type_dict[ds]
+    if intype == 'bcf':
+        raise Exception("BCF not yet supported")
+    elif intype == 'vcf':
+        return conf[ds]['infile']
+    else:
+        return expand("intermediate/cohort_proc/{{cohort}}.{{build}}.from{inputtype}.vcf.gz",
+                      inputtype = intype)
+
+def choose_filter_vcf_initial(wc):
+    ds = wc['cohort']
+    intype = input_type_dict[ds]
+    if intype == 'bcf':
+        raise Exception("BCF not yet supported")
+    elif intype == 'vcf':
+        return filter_dict[ds]
+    else:
+        return ''
+
+rule vcf:
+    input: choose_vcf_initial
+    output:
+        vcf = temp("intermediate/cohort_proc/{cohort}.{build}.allchrom.vcf.gz"),
+        tbi = "intermediate/cohort_proc/{cohort}.{build}.allchrom.vcf.gz.tbi"
+    params:
+        filt = choose_filter_vcf_initial
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 4000,
+        time_min = 8600
+    shell: '''
+filt="{params.filt}"
+if [[ -z "${{filt// }}" ]]; then
+  cp {input} {output.vcf}
+else
+  bcftools view {params.filt} -Oz -o {output.vcf} {input}
+fi
+bcftools index -t {output.vcf}
+'''
+
+rule vcf_presplit:
+    input: choose_vcf_initial
+    output:
+        vcf = temp("intermediate/{cohort}.{build}.chr{chrom}.perchrom.vcf.gz"),
+        tbi = "intermediate/{cohort}.{build}.chr{chrom}.perchrom.vcf.gz.tbi"
+    params:
+        filt = lambda wc: filter_dict[wc['cohort']],
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 4000,
+        time_min = 8600
+    shell: '''
+filt="{params.filt}"
+if [[ -z "${{filt// }}" ]]; then
+  ln -rs {input} {output.vcf}
+else
+  bcftools view {params.filt} -Oz -o {output.vcf} {input}
+fi
+bcftools index -t {output.vcf}
+'''
+
+rule vcf_merged:
+    input:
+        vcf = expand("intermediate/{{cohort}}.{{build}}.chr{chrom}.perchrom.vcf.gz", chrom = range(1,23)),
+        tbi = expand("intermediate/{{cohort}}.{{build}}.chr{chrom}.perchrom.vcf.gz.tbi", chrom = range(1,23))
+    output:
+        vcf = temp("intermediate/{cohort}.{build}.mergedchrom.vcf.gz"),
+        tbi = "intermediate/{cohort}.{build}.mergedchrom.vcf.gz.tbi"
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 4000,
+        time_min = 8600
+    shell: '''
+bcftools concat -Oz -o {output.vcf} {input.vcf}
+bcftools index -t {output.vcf}
+'''
+
+def choose_vcf_general(wc):
+    ds = wc['cohort']
+    intype = input_type_dict[ds]
+    if intype == 'vcf' and re.match(r'.+\{chrom\}', conf[ds]['infile']):
+        return rules.vcf_merged.output.vcf
+    else:
+        return rules.vcf.output.vcf
+
+def choose_tbi_general(wc):
+    return choose_vcf_general(wc) + '.tbi'
+
+rule vcf_norm:
+    input:
+        vcf = choose_vcf_general,
+        tbi = choose_tbi_general,
+        fasta = lambda wc: ref_fasta[wc["build"]]
+    output: "intermediate/{cohort}.{build}.vcf.gz"
+    conda: "envs/bcftools.yaml"
+    threads: 3
+    resources:
+        mem_mb = 1024,
+        time_min = 8600
+    shell:
+        """
+bcftools norm -d none -f {input.fasta} {input.vcf} | \
+bcftools annotate --threads 2 --set-id '%CHROM:%POS:%REF:%ALT' -Oz -o {output}
+sleep 5
+bcftools index -tf {output}
+"""
+
+rule process_smap_1kg_hgdp:
+    input:
+        metadata = HTTP.remote("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
+    output:
+        table = "reference_proc/hgdp_1kg.popdata.tsv.gz",
+        smap = "reference_proc/hgdp_1kg.smap"
+    threads: 1
+    resources:
+        mem_mb = 512,
+        time_min = 5
+    container: 'docker://befh/r_procadmix:v1'
+    script: 'scripts/rule_process_smap_1kg_hgdp.R'
+
+
+rule ref_admixture_filter:
+    input: "/sc/arion/projects/load/data-ark/Public_Unrestricted/gnomAD/3.1/vcfs/HGDP-1KG/gnomad.genomes.v3.1.2.hgdp_tgp.chr{chrom}.vcf.bgz"
+    output: temp('reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz')
+    conda: "envs/bcftools.yaml"
+    threads: 4
+    resources:
+        mem_mb = 2048,
+        time_min = 360
+    shell:
+        '''
+bcftools filter -i 'FILTER="PASS" && INFO/AF[0] >= 0.05 && INFO/AF[0] <= 0.95 && F_MISSING < 0.05' {input} | \
+  bcftools annotate -x 'INFO,^FORMAT/GT' | \
+  bcftools view --types snps -Oz -o {output}
+sleep 5
+bcftools index -tf {output}
+'''
+
+rule ref_union_prune:
+    input:
+        vcf = 'reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz',
+        sample_vcf = rules.vcf_norm.output
+    output: temp('intermediate/ref_pruned/by_chr/{admixstem}_pruned_{cohort}.chr{chrom}.{build}.vcf.gz')
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 2048,
+        time_min = 360
+    shell:
+        '''
+bcftools view -R {input.sample_vcf} --regions-overlap 2 {input.vcf} | \
+  bcftools +prune -m r2=0.1 -w 100kb -Oz -o {output}
+'''
+
+rule ref_admixture_cat:
+    input: expand('intermediate/ref_pruned/by_chr/{{admixstem}}_pruned_{{cohort}}.chr{chrom}.{{build}}.vcf.gz', chrom=range(1, 23))
+    output: temp('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.vcf.gz')
+    threads: 1
+    resources:
+        mem_mb = 256,
+        time_min = 5
+    shell:
+        '''
+bcftools concat {input} | \
+bcftools annotate --set-id '%CHROM:%POS:%REF:%ALT' -Oz -o {output}
+'''
+
+rule ref_plink:
+    input: rules.ref_admixture_cat.output
+    output: multiext('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.', 'bed', 'bim', 'fam')
+    params:
+        out = lambda wc, output: output[0][:-4]
+    conda: 'envs/plink.yaml'
+    threads: 1
+    resources:
+        mem_mb = 256,
+        time_min = 5
+    shell:
+        '''
+plink --vcf {input} --double-id --keep-allele-order --make-bed --out {params.out}
+'''
+
+rule cohort_prune:
+    input:
+        ref_vcf = rules.ref_admixture_cat.output,
+        vcf = rules.vcf_norm.output
+    output: temp("intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.vcf.gz")
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 2048,
+        time_min = 360
+    shell:
+        '''
+bcftools view -R {input.ref_vcf} --regions-overlap 2 {input.vcf} -Oz -o {output}
+'''
+
+rule cohort_final_plink:
+    input: rules.cohort_prune.output
+    output: multiext("intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.", "bed", "bim", "fam")
+    params:
+        out = lambda wc, output: output[0][:-4]
+    conda: 'envs/plink.yaml'
+    threads: 1
+    resources:
+        mem_mb = 256,
+        time_min = 5
+    shell:
+        '''
+plink --vcf {input} --double-id --keep-allele-order --make-bed --out {params.out}
+'''
+
+rule check_bims:
+    input:
+        ref = 'intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.bim',
+        cohort = 'intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.bim'
+    output: 'intermediate/bim_check/{cohort}_{admixstem}.{build}.bim_diff.txt'
+    threads: 1
+    resources:
+        mem_mb = 1024,
+        time_min = 5
+    shell: 'diff -s {input.ref} {input.cohort} &> {output}'
+
+rule admixture:
+    input:
+        bed = "intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.bed",
+        other = multiext("intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.", "bim", "fam"),
+        check = rules.check_bims.output
+    output:
+        Qtemp = temp('{admixstem}_pruned_{cohort}.{build}.12.Q'),
+        Ptemp = temp('{admixstem}_pruned_{cohort}.{build}.12.P'),
+        Q = 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.Q',
+        P = 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.P'
+    log: 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.log'
+    threads: 40
+    resources:
+        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        time_min = 1440 # 24 hours. Should take <= 14 hours
+    container: 'docker://befh/r_env_gwasamplefilt:5'
+    shell:
+        '''
+admixture -s 42 --cv {input.bed} 12 -j{threads} 2>&1 | tee {log}
+cp {output.Qtemp} {output.Q}
+cp {output.Ptemp} {output.P}
+'''
+
+rule admixture_project:
+    input:
+        bed = "intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.bed",
+        other = multiext("intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.", "bim", "fam"),
+        P = rules.admixture.output.P
+    output:
+        Qtemp = temp('{cohort}_pruned_{admixstem}.{build}.12.Q'),
+        Ptemp = temp('{cohort}_pruned_{admixstem}.{build}.12.P'),
+        P_in = temp('{cohort}_pruned_{admixstem}.{build}.12.P.in'),
+        Q = 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.Q',
+        P = 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.P'
+    log: 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.log'
+    threads: 40
+    resources:
+        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        time_min = 1440 # 24 hours. Should take <= 14 hours
+    container: 'docker://befh/r_env_gwasamplefilt:5'
+    shell:
+        '''
+cp {input.P} {output.P_in}
+admixture -P -s 42 {input.bed} 12 -j{threads} 2>&1 | tee {log}
+cp {output.Qtemp} {output.Q}
+cp {output.Ptemp} {output.P}
+'''
+
+rule process_admixture:
+    input:
+        q_ref = rules.admixture.output.Q,
+        fam_ref = 'intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.fam',
+        q_samp = rules.admixture_project.output.Q,
+        fam_samp = 'intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.fam',
+        pops = rules.process_smap_1kg_hgdp.output.table
+    output:
+        rda = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.rda",
+        anc = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.tsv"
+    threads: 1
+    resources:
+        mem_mb = 512,
+        time_min = 5
+    container: 'docker://befh/r_procadmix:v1'
+    script: 'scripts/rule_process_admixture.R'
+
+rule report_refadmix:
+    input: rules.process_admixture.output.rda
+    output: 'results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html'
+    threads: 1
+    resources:
+        mem_mb = 4096,
+        time_min = 10
+    container: 'docker://befh/r_procadmix:v1'
+    script: 'scripts/rule_report_refadmix.Rmd'
