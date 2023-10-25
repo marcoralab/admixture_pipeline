@@ -91,7 +91,7 @@ rule all:
         expand('results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html',
                zip, admixstem=['gnomad-hgdp-1kg' for x in DATASETS], build=BUILD, cohort=DATASETS),
 
-def get_intype(wc):
+def get_intype_(wc):
     intype_ =  wc['inputtype']
     if intype_ == 'bplink':
         return 'bfile'
@@ -117,7 +117,7 @@ rule plink_filter:
         ins = lambda wc: input_dict[wc['cohort']],
         out = "intermediate/start/{cohort}.{build}.from{inputtype}",
         filt = lambda wc: filter_dict[wc['cohort']],
-        ftype = get_intype
+        ftype = get_intype_
     resources:
         mem_mb = 10000,
         time_min = 30
@@ -407,9 +407,52 @@ rule cohort_prune:
 bcftools view -R {input.ref_vcf} --regions-overlap 2 {input.vcf} -Oz -o {output}
 '''
 
-rule cohort_final_plink:
+rule ref_admixture_index:
+    input: rules.ref_admixture_cat.output
+    output: rules.ref_admixture_cat.output[0] + '.tbi'
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 1024,
+        time_min = 360
+    shell:
+        '''
+bcftools index -tf {input}
+'''
+
+rule cohort_index:
     input: rules.cohort_prune.output
-    output: multiext("intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.", "bed", "bim", "fam")
+    output: rules.cohort_prune.output[0] + '.tbi'
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 1024,
+        time_min = 360
+    shell:
+        '''
+bcftools index -tf {input}
+'''
+
+rule cohort_merge:
+    input:
+        cohort = rules.cohort_prune.output,
+        ref = rules.ref_admixture_cat.output,
+        reftbi = rules.ref_admixture_index.output,
+        cohorttbi = rules.cohort_index.output
+    output: temp("intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.vcf.gz")
+    conda: "envs/bcftools.yaml"
+    threads: 1
+    resources:
+        mem_mb = 2048,
+        time_min = 360
+    shell:
+        '''
+bcftools merge {input.cohort} {input.ref} -Oz -o {output}
+'''
+
+rule cohort_final_plink:
+    input: rules.cohort_merge.output
+    output: multiext("intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.", "bed", "bim", "fam")
     params:
         out = lambda wc, output: output[0][:-4]
     conda: 'envs/plink.yaml'
@@ -425,7 +468,7 @@ plink --vcf {input} --double-id --keep-allele-order --make-bed --out {params.out
 rule check_bims:
     input:
         ref = 'intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.bim',
-        cohort = 'intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.bim'
+        cohort = 'intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.bim'
     output: 'intermediate/bim_check/{cohort}_{admixstem}.{build}.bim_diff.txt'
     threads: 1
     resources:
@@ -458,16 +501,16 @@ cp {output.Ptemp} {output.P}
 
 rule admixture_project:
     input:
-        bed = "intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.bed",
-        other = multiext("intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.", "bim", "fam"),
+        bed = "intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.bed",
+        other = multiext("intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.", "bim", "fam"),
         P = rules.admixture.output.P
     output:
-        Qtemp = temp('{cohort}_pruned_{admixstem}.{build}.12.Q'),
-        Ptemp = temp('{cohort}_pruned_{admixstem}.{build}.12.P'),
-        P_in = temp('{cohort}_pruned_{admixstem}.{build}.12.P.in'),
-        Q = 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.Q',
-        P = 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.P'
-    log: 'results/admixture_samp/{cohort}_pruned_{admixstem}.{build}.12.log'
+        Qtemp = temp('{cohort}_merged_{admixstem}.{build}.12.Q'),
+        Ptemp = temp('{cohort}_merged_{admixstem}.{build}.12.P'),
+        P_in = temp('{cohort}_merged_{admixstem}.{build}.12.P.in'),
+        Q = 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.Q',
+        P = 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.P'
+    log: 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.log'
     threads: 40
     resources:
         mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
@@ -481,12 +524,21 @@ cp {output.Qtemp} {output.Q}
 cp {output.Ptemp} {output.P}
 '''
 
+def fam_samp_orig(wc):
+    ds = wc['cohort']
+    intype = get_intype(conf, ds)
+    if intype in ['plink', 'bplink']:
+        return expand(rules.plink_filter.params.out + '.fam',
+                      **wc, inputtype=intype)
+    else:
+        return []
+
 rule process_admixture:
     input:
-        q_ref = rules.admixture.output.Q,
         fam_ref = 'intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.fam',
         q_samp = rules.admixture_project.output.Q,
-        fam_samp = 'intermediate/cohort_pruned/{cohort}_pruned_{admixstem}.{build}.fam',
+        fam_samp = 'intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.fam',
+        fam_samp_orig = fam_samp_orig,
         pops = rules.process_smap_1kg_hgdp.output.table
     output:
         rda = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.rda",

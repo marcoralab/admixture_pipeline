@@ -8,10 +8,10 @@ library(stringr)
 ## Input and output files
 
 if (exists("snakemake")) {
-  in_q_ref <- snakemake@input[["q_ref"]]
   in_fam_ref <- snakemake@input[["fam_ref"]]
   in_q_samp <- snakemake@input[["q_samp"]]
   in_fam_samp <- snakemake@input[["fam_samp"]]
+  in_fam_samp_orig <- snakemake@input[["fam_samp_orig"]]
   in_pops <- snakemake@input[["pops"]]
   out_anc <- snakemake@output[["anc"]]
   out_rda <- snakemake@output[["rda"]]
@@ -24,6 +24,8 @@ if (exists("snakemake")) {
   out_rda <- "reference_proc/hgdp_1kg.admixture.rda"
   out_samplist <- "reference_proc/hgdp_1kg.filt.samplist"
 }
+
+save.image("debug.rda")
 
 # Fam and popfiles
 ## ======================================##
@@ -39,9 +41,7 @@ read_fam <- function(in_fam) {
 }
 
 famfile_ref <- read_fam(in_fam_ref) |>
-  mutate(partition = "reference") |>
-  left_join(pops, by = c("IID"))
-
+  mutate(partition = "reference")
 famfile_samp <- read_fam(in_fam_samp) |>
   mutate(partition = "sample")
 
@@ -58,9 +58,27 @@ read_q <- function(in_q, fam) {
     rename_with(~ str_replace(.x, "^X", "k"))
 }
 
-tbl_admix_ref <- read_q(in_q_ref, famfile_ref)
 tbl_admix_samp <- read_q(in_q_samp, famfile_samp)
-tbl_admix <- bind_rows(tbl_admix_ref, tbl_admix_samp)
+
+overlap <- intersect(famfile_ref$IID, tbl_admix_samp$IID)
+if (length(overlap) == nrow(famfile_ref)) {
+  tbl_admix <- tbl_admix_samp |>
+    left_join(pops, by = "IID") |>
+    mutate(partition = ifelse(IID %in% famfile_ref$IID, "reference", partition))
+  tbl_admix_ref <- tbl_admix |>
+    filter(IID %in% famfile_ref$IID) |>
+    mutate(FID = "reference")
+  tbl_admix_samp <- tbl_admix |>
+    filter(!(IID %in% tbl_admix_ref$IID))
+} else if (length(overlap) != 0) {
+  stop("Missing reference samples")
+} else {
+  tbl_admix_ref <- read_q(in_q_ref, famfile_ref)
+  tbl_admix_ref <- tbl_admix_ref |>
+    left_join(pops, by = "IID") |>
+    mutate(FID = "reference")
+  tbl_admix <- bind_rows(tbl_admix_ref, tbl_admix_samp)
+}
 
 # Determining cluster labels
 

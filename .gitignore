@@ -1,0 +1,14 @@
+logs/
+input
+reference_proc/
+results/
+results_project/
+.cache
+.snakemake
+*.P
+*.Q
+*.P.in
+reference
+*.sif
+*.rda
+intermediate/
