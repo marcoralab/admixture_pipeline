@@ -159,10 +159,29 @@ config_impute["out_dir"] = "output/imputation"
 config_impute['ref'] = impute_fasta
 config_impute['imputation']['default']['build'] = impute_build
 config_impute['imputation']['default']['refpanel'] = 'topmed-r2'
-# snakefile_impute = 'modules/imputePipeline/workflow/Snakefile'
-snakefile_impute = github("marcoralab/imputePipeline", path="workflow/Snakefile", tag="v0.4.10")
-#snakefile_shapeit = github("marcoralab/shapeit5_pipeline", path="workflow/Snakefile", tag="866c2e3")
-snakefile_shapeit = 'modules/shapeit5_pipeline/workflow/Snakefile'
+
+if 'pipeline_versions' not in config:
+    config['pipeline_versions'] = {}
+if 'imputePipeline' not in config['pipeline_versions']:
+    config['pipeline_versions']['imputePipeline'] = 'v0.4.10'
+if 'shapeit5_pipeline' not in config['pipeline_versions']:
+    config['pipeline_versions']['shapeit5_pipeline'] = '866c2e3'
+version_impute = config['pipeline_versions']['imputePipeline']
+version_shapeit = config['pipeline_versions']['shapeit5_pipeline']
+
+if re.match(r'/', version_impute):
+    snakefile_impute = os.path.join(
+        os.path.normpath(version_impute), 'workflow', 'Snakefile')
+else:
+    snakefile_impute = github("marcoralab/imputePipeline",
+        path="workflow/Snakefile", tag=version_impute)
+
+if re.match(r'/', version_shapeit):
+    snakefile_shapeit = os.path.join(
+        os.path.normpath(version_shapeit), 'workflow', 'Snakefile')
+else:
+    snakefile_shapeit = github("marcoralab/shapeit5_pipeline",
+        path="workflow/Snakefile", tag=version_shapeit)
 
 module imputation:
     snakefile: snakefile_impute

@@ -1,3 +1,10 @@
+# Provide either GitHub versions or local paths to the top directory of each
+# if the pipelines are directly in the current directory, use "./" at the beginning
+
+pipeline_versions:
+  imputePipeline: v0.4.10
+  shapeit5_pipeline: 866c2e3
+
 indir: "/some/directory"
 datasets:
   # BioMe_array-regeneron_GSA:
