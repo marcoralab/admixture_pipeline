@@ -183,6 +183,9 @@ else:
     snakefile_shapeit = github("marcoralab/shapeit5_pipeline",
         path="workflow/Snakefile", tag=version_shapeit)
 
+if 'postImpute' in config['pipeline_versions']:
+    config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
+
 module imputation:
     snakefile: snakefile_impute
     config: config_impute
