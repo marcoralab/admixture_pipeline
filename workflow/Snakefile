@@ -59,7 +59,7 @@ def get_in(conf, dataset):
         return fname
 
 ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
-             "hg38": "reference/human_g1k_GRCh38.fasta"}
+             "hg38": "reference/human_ucsc_GRCh38.fasta"}
 
 tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
 tgbase_38 = "https://hgdownload.cse.ucsc.edu/goldenPath/" # not actually tg
@@ -89,7 +89,6 @@ def fasta_md5(wc):
 
 DATASETS = [x for x in conf.keys()]
 BUILD = [get_build(conf, x) for x in DATASETS] # hg19 or hg38
-array = [conf[x]['array'] for x in DATASETS]
 filter_dict = {x: conf[x].get('filters', '') for x in DATASETS}
 input_type_dict = {x: get_intype(conf, x) for x in DATASETS}
 input_dict = {x: get_in(conf, x) for x in DATASETS}
@@ -120,8 +119,8 @@ rule all:
 rule download_tg_fa:
     input: fasta_remote
     output:
-        "reference/human_g1k_{gbuild}.fasta",
-        "reference/human_g1k_{gbuild}.fasta.fai"
+        "reference/human_{source}_{gbuild}.fasta",
+        "reference/human_{source}_{gbuild}.fasta.fai"
     params:
         md5 = lambda wc: fasta_md5(wc)
     resources:
@@ -211,15 +210,14 @@ config_impute["out_dir"] = "output/imputation"
 config_impute['ref'] = impute_fasta
 config_impute['imputation']['default']['build'] = impute_build
 config_impute['imputation']['default']['refpanel'] = 'topmed-r2'
+if not "outputs" in config_impute:
+    config_impute["outputs"] = ['stat_report', 'vcf_bycohort']
 
 if 'pipeline_versions' not in config:
     config['pipeline_versions'] = {}
 if 'imputePipeline' not in config['pipeline_versions']:
-    config['pipeline_versions']['imputePipeline'] = 'v0.4.10'
-if 'shapeit5_pipeline' not in config['pipeline_versions']:
-    config['pipeline_versions']['shapeit5_pipeline'] = '866c2e3'
+    config['pipeline_versions']['imputePipeline'] = 'b40c3521634334c801ed3381769ee8146b049f96'
 version_impute = config['pipeline_versions']['imputePipeline']
-version_shapeit = config['pipeline_versions']['shapeit5_pipeline']
 
 if re.match(r'/', version_impute):
     snakefile_impute = os.path.join(
@@ -227,13 +225,6 @@ if re.match(r'/', version_impute):
 else:
     snakefile_impute = github("marcoralab/imputePipeline",
         path="workflow/Snakefile", tag=version_impute)
-
-if re.match(r'/', version_shapeit):
-    snakefile_shapeit = os.path.join(
-        os.path.normpath(version_shapeit), 'workflow', 'Snakefile')
-else:
-    snakefile_shapeit = github("marcoralab/shapeit5_pipeline",
-        path="workflow/Snakefile", tag=version_shapeit)
 
 if 'postImpute' in config['pipeline_versions']:
     config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
@@ -282,6 +273,10 @@ plink --bed {input.bed} --bim {input.bim} --fam {input.fam} --recode vcf bgz \
 def choose_vcf_initial(wc):
     ds = wc['cohort']
     intype = input_type_dict[ds]
+    if conf[ds].get('impute', False):
+        if intype in ['bcf', 'vcf']:
+            raise Exception("VCF or BCF imputation not yet supported")
+        return 'output/imputation/data/{cohort}_chrall_filtered.vcf.gz'
     if intype == 'bcf':
         raise Exception("BCF not yet supported")
     elif intype == 'vcf':
