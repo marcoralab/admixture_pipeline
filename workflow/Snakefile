@@ -175,7 +175,8 @@ rule plink_filter:
     conda: "envs/plink.yaml"
     shell:
         """
-plink --{params.ftype} {params.ins} {params.filt} --make-bed --out {params.out}
+plink --keep-allele-order --{params.ftype} {params.ins} {params.filt} \
+  --make-bed --out {params.out}
 """
 
 def preimpute_files(wc):
