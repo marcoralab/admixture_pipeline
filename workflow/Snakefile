@@ -128,6 +128,7 @@ rule download_tg_fa:
         time_min = 30
     conda: 'envs/bcftools.yaml'
     #cache: True
+    local: True
     shell:
         '''
 md5sum -c <(echo {params.md5} {input[0]})
