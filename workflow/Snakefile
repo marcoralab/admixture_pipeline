@@ -59,7 +59,7 @@ def get_in(conf, dataset):
         return fname
 
 ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
-             "hg38": "reference/human_ucsc_GRCh38.fasta"}
+             "hg38": "reference/human_g1k_GRCh38.fasta"}
 
 tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
 tgbase_38 = "ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/"
