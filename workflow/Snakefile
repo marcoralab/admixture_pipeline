@@ -67,7 +67,7 @@ tgbase_38 = "ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/"
 tgfasta = dict(
     hg19=(tgbase + "technical/reference/human_g1k_v37.fasta.gz"),
     GRCh38=(tgbase_38 + 'technical/reference/GRCh38_reference_genome/' +
-            'GRCh38_full_analysis_set_plus_decoy_hla.fa'
+            'GRCh38_full_analysis_set_plus_decoy_hla.fa')
 
 def fasta_remote(wc):
     gbuild = wc.gbuild
