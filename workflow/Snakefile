@@ -261,7 +261,7 @@ rule plink_vcf:
         out = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}"
     resources:
         mem_mb = 10000,
-        time_min = 30
+        time_min = 1440
     conda: "envs/plink.yaml"
     shell:
         '''
