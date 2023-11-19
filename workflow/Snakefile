@@ -191,7 +191,7 @@ rule link_impute:
         bim = "intermediate/impute_start/{cohort}.bim",
         fam = "intermediate/impute_start/{cohort}.fam"
     resources:
-        mem_mb = 100,
+        mem_mb = 1024,
         time_min = 30
     shell:
         '''
