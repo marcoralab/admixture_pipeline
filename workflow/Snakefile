@@ -62,28 +62,24 @@ ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
              "hg38": "reference/human_ucsc_GRCh38.fasta"}
 
 tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
-tgbase_38 = "https://hgdownload.cse.ucsc.edu/goldenPath/" # not actually tg
-# tgbase_38 = "ftp.1000genomes.ebi.ac.uk/vol1/ftp/"
+tgbase_38 = "ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/"
 
 tgfasta = dict(
     hg19=(tgbase + "technical/reference/human_g1k_v37.fasta.gz"),
-    GRCh38=(tgbase_38 + 'hg38/hg38Patch11/hg38Patch11.fa.gz'))
-    # GRCh38=(tgbase_38 + 'technical/reference/GRCh38_reference_genome/'
-    #         + 'GRCh38_full_analysis_set_plus_decoy_hla.fa'))
+    GRCh38=(tgbase_38 + 'technical/reference/GRCh38_reference_genome/' +
+            'GRCh38_full_analysis_set_plus_decoy_hla.fa'
 
 def fasta_remote(wc):
     gbuild = wc.gbuild
     if gbuild == 'GRCh38':
-        return HTTP.remote(tgfasta['GRCh38'])
-        # return FTP.remote(tgfasta['GRCh38'], immediate_close=True)
+        return FTP.remote(tgfasta['GRCh38'], immediate_close=True)
     else:
         return HTTP.remote(tgfasta[gbuild])
 
 def fasta_md5(wc):
     gbuild = wc.gbuild
     if gbuild == 'GRCh38':
-        return '2c375fad75722ad26dab4791eb9e0678'
-        # return '64b32de2fc934679c16e83a2bc072064'
+        return '64b32de2fc934679c16e83a2bc072064'
     elif gbuild == 'hg19':
         return '45f81df94f0408d082363e34a081ed81'
 
