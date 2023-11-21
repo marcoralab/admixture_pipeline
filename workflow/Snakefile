@@ -218,7 +218,7 @@ if 'imputePipeline' not in config['pipeline_versions']:
     config['pipeline_versions']['imputePipeline'] = 'b40c3521634334c801ed3381769ee8146b049f96'
 version_impute = config['pipeline_versions']['imputePipeline']
 
-if re.match(r'/', version_impute):
+if re.search(r'/', version_impute):
     snakefile_impute = os.path.join(
         os.path.normpath(version_impute), 'workflow', 'Snakefile')
 else:
