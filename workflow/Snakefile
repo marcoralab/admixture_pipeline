@@ -475,21 +475,6 @@ bcftools concat {input} | \
 bcftools annotate --set-id '%CHROM:%POS:%REF:%ALT' -Oz -o {output}
 '''
 
-rule ref_plink:
-    input: rules.ref_admixture_cat.output
-    output: multiext('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.', 'bed', 'bim', 'fam')
-    params:
-        out = lambda wc, output: output[0][:-4]
-    conda: 'envs/plink.yaml'
-    threads: 1
-    resources:
-        mem_mb = 256,
-        time_min = 5
-    shell:
-        '''
-plink --vcf {input} --double-id --keep-allele-order --make-bed --out {params.out}
-'''
-
 rule cohort_prune:
     input:
         ref_vcf = rules.ref_admixture_cat.output,
@@ -539,13 +524,47 @@ rule cohort_merge:
         cohorttbi = rules.cohort_index.output
     output: temp("intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.vcf.gz")
     conda: "envs/bcftools.yaml"
-    threads: 1
+    threads: 7
     resources:
         mem_mb = 2048,
         time_min = 360
     shell:
         '''
-bcftools merge {input.cohort} {input.ref} -Oz -o {output}
+bcftools merge {input.cohort} {input.ref} --threads 3 |
+  bcftools norm -m+any |
+  bcftools view --max-alleles 2 --threads 3 -Oz -o {output}
+'''
+
+rule ref_refilter:
+    input:
+        vcf = rules.ref_admixture_cat.output,
+        tbi = rules.ref_admixture_index.output,
+        merge_vcf = rules.cohort_merge.output
+    output: temp("intermediate/ref_pruned/{admixstem}_pruned-filt_{cohort}.{build}.vcf.gz")
+    conda: "envs/bcftools.yaml"
+    threads: 4
+    resources:
+        mem_mb = 2048,
+        time_min = 360
+    shell:
+        '''
+bcftools view -R {input.merge_vcf} --regions-overlap 2 \
+  --threads {threads} -Oz -o {output} {input.vcf}
+'''
+
+rule ref_plink:
+    input: rules.ref_refilter.output
+    output: multiext('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.', 'bed', 'bim', 'fam')
+    params:
+        out = lambda wc, output: output[0][:-4]
+    conda: 'envs/plink.yaml'
+    threads: 1
+    resources:
+        mem_mb = 256,
+        time_min = 5
+    shell:
+        '''
+plink --vcf {input} --double-id --keep-allele-order --make-bed --out {params.out}
 '''
 
 rule cohort_final_plink:
@@ -643,7 +662,7 @@ rule process_admixture:
         anc = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.tsv"
     threads: 1
     resources:
-        mem_mb = 512,
+        mem_mb = 2048,
         time_min = 5
     container: 'docker://befh/r_procadmix:v1'
     script: 'scripts/rule_process_admixture.R'
