@@ -228,11 +228,12 @@ else:
 if 'postImpute' in config['pipeline_versions']:
     config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
 
-module imputation:
-    snakefile: snakefile_impute
-    config: config_impute
+if impute_datasets:
+    module imputation:
+        snakefile: snakefile_impute
+        config: config_impute
 
-use rule * from imputation as imputation_*
+    use rule * from imputation as imputation_*
 
 rule Sample_Flip:
     input:
