@@ -91,17 +91,17 @@ plot_admix <- function(x, by = cluster_cols, poplabel = TRUE) {
       group_by(spop) |>
       mutate(label_n = sprintf("%s\n%i", spop, n())) |>
       ungroup() |>
-      select(IID, label_n)
+      select(ID, label_n)
 
     tbl_use <- tbl_use |>
       arrange(admixture_super_pop_max, -max_spop_prop) |>
-      left_join(pop_number, by = "IID") |>
+      left_join(pop_number, by = "ID") |>
       mutate(spop = label_n,
-             IID = forcats::fct_inorder(as.character(IID)))
+             ID = forcats::fct_inorder(as.character(ID)))
     stripangle <- 0
   }
 
-  plt <- ggplot(tbl_use, aes(x = IID, y = prop, fill = Cluster)) +
+  plt <- ggplot(tbl_use, aes(x = ID, y = prop, fill = Cluster)) +
     geom_bar(position = "fill", stat = "identity", width = 1) +
     theme_classic() +
     labs(x = "Individual", y = "Global Ancestry", color = "Cluster") +
