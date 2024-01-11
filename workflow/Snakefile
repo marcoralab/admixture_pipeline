@@ -208,7 +208,7 @@ config_impute["SAMPLES"] = impute_datasets
 config_impute["out_dir"] = "output/imputation"
 config_impute['ref'] = impute_fasta
 config_impute['imputation']['default']['build'] = impute_build
-config_impute['imputation']['default']['refpanel'] = 'topmed-r2'
+config_impute['imputation']['default']['refpanel'] = 'topmed-r3'
 if not "outputs" in config_impute:
     config_impute["outputs"] = ['stat_report', 'vcf_bycohort']
 
