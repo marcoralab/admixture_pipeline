@@ -455,6 +455,50 @@ sleep 5
 bcftools index -tf {output}
 '''
 
+## VCF liftover module
+liftover = {}
+liftover['inputs'] = {
+    ADMIXTURE_REF: {'input_vcf': f'resources/ref/proc/{ADMIXTURE_REF}.chr{{chrom}}.hg38.vcf.gz',
+        'build': 'b38',
+        'contigs': '1:22'}
+}
+liftover['output_builds'] = ['b37']
+liftover['all_GATK_builds'] = True
+liftover['concatenate'] = False
+liftover['liftover_outdir'] = "resources/ref/lifted"
+
+if 'vcf_liftover' not in config['pipeline_versions']:
+    config['pipeline_versions']['vcf_liftover'] = '3aed94604072cca8ce6fd2245ee4710cb6aa8924'
+elif config['pipeline_versions']['vcf_liftover'] == 'local':
+    config['pipeline_versions']['vcf_liftover'] = os.path.join(local_src, 'vcf_liftover')
+version_vcf_liftover = config['pipeline_versions']['vcf_liftover']
+
+if re.search(r'/', version_vcf_liftover):
+    sfile_vcf_liftover = os.path.join(
+      os.path.abspath(version_vcf_liftover), 'workflow', 'Snakefile')
+else:
+    sfile_vcf_liftover = github('marcoralab/vcf_liftover',
+        path='workflow/Snakefile', tag=version_vcf_liftover)
+
+module vcf_liftover:
+    snakefile: sfile_vcf_liftover
+    config: liftover
+
+use rule * from vcf_liftover as liftref_*
+
+rule ref_link_lifted:
+    input:
+        vcf = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz',
+        tbi = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz.tbi'
+    output:
+        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz',
+        tbi = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz.tbi'
+    localrule: True
+    shell: '''
+ln -rs {input.vcf} {output.vcf}
+ln -rs {input.tbi} {output.tbi}
+'''
+
 rule ref_union_prune:
     input:
         vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.{build}.vcf.gz',
