@@ -3,8 +3,18 @@ min_version("7.0")
 configfile: "config/config.yaml"
 
 import re
-from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
-from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+
+# # check if running on minerva
+# import os
+# if os.path.exists('/sc/arion'):
+#     minerva = True
+# else:
+#     minerva = False
+# 
+# if minerva:
+#    shell.prefix('ml proxies; ')
+
+# Check for internet
 
 from urllib.request import urlopen
 from urllib.error import URLError
@@ -15,19 +25,72 @@ try:
 except URLError as ex:
     iconnect = False
 
-
-configfile: "config/config.yaml"
+iconnect = iconnect and not ('nointernet' in config and config['nointernet'])
 
 class dummyprovider:
     def remote(string_, allow_redirects="foo", immediate_close="bar"):
-        return string_
+        nohttp = string_.removeprefix("http://").removeprefix("https://")
+        noftp = nohttp.removeprefix("ftp://").removeprefix("ftps://")
+        return noftp
 
-if iconnect: # and not ('nointernet' in config and config['nointernet']):
-    FTP = FTPRemoteProvider()
-    HTTP = HTTPRemoteProvider()
+if snakemake.__version__.startswith("7."):
+    from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
+    from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+    H_ = HTTPRemoteProvider()
+    F_ = FTPRemoteProvider()
+
+    def strip_protocol(cls, string_, *args, **kwargs):
+        if string_.startswith("ftp://") or string_.startswith("ftps://"):
+            url = string_.removeprefix("ftp://").removeprefix("ftps://")
+        elif string_.startswith("http://") or string_.startswith("https://"):
+            url = string_.removeprefix("http://").removeprefix("https://")
+        else:
+            url = string_
+        return cls.remote(url, *args, **kwargs)
+
+    if iconnect:
+        class FTP:
+            @staticmethod
+            def remote(string_, *args, **kwargs):
+                return strip_protocol(F_, string_, *args, **kwargs)
+        class HTTP:
+            @staticmethod
+            def remote(string_, *args, **kwargs):
+                return strip_protocol(H_, string_, *args, **kwargs)
+    else:
+        FTP = dummyprovider
+        HTTP = dummyprovider
+    class storage:
+        @staticmethod
+        def ftp(string_, *args, **kwargs):
+            return FTP.remote(string_, *args, **kwargs)
+        @staticmethod
+        def http(string_, *args, **kwargs):
+            return HTTP.remote(string_, *args, **kwargs)
 else:
-    FTP = dummyprovider
-    HTTP = dummyprovider
+    if iconnect:
+        class FTP:
+            @staticmethod
+            def remote(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_startswith("ftp://") and not string_startswith("ftps://"):
+                    string_ = "ftp://" + string_
+                return storage.ftp(string_)
+        class HTTP:
+            @staticmethod
+            def remote(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_startswith("http://") and not string_startswith("https://"):
+                    string_ = "https://" + string_
+                return storage.http(string_)
+    else:
+        FTP = dummyprovider
+        HTTP = dummyprovider
+        class storage:
+            @staticmethod
+            def ftp(string_, *args, **kwargs):
+                return FTP.remote(string_, *args, **kwargs)
+            @staticmethod
+            def http(string_, *args, **kwargs):
+                return HTTP.remote(string_, *args, **kwargs)
 
 conf = config['datasets']
 
@@ -235,7 +298,7 @@ if 'postImpute' in config['pipeline_versions']:
     if config['pipeline_versions']['postImpute'] == 'local':
         config['pipeline_versions']['postImpute'] = os.path.join(local_src, 'postImpute')
     else:
-    config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
+        config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
 
 if impute_datasets:
     module imputation:
