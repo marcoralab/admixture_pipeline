@@ -1,5 +1,6 @@
 from snakemake.utils import min_version
 min_version("7.0")
+configfile: "config/config.yaml"
 
 import re
 from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
@@ -518,6 +519,7 @@ bcftools view -R {input.sample_vcf} --regions-overlap 2 {input.vcf} | \
 rule ref_admixture_cat:
     input: expand('intermediate/ref_pruned/by_chr/{{admixstem}}_pruned_{{cohort}}.chr{chrom}.{{build}}.vcf.gz', chrom=range(1, 23))
     output: temp('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.vcf.gz')
+    conda: "envs/bcftools.yaml"
     threads: 1
     resources:
         mem_mb = 256,
