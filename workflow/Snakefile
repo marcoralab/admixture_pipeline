@@ -80,6 +80,14 @@ def fasta_md5(wc):
     elif gbuild == 'hg19':
         return '45f81df94f0408d082363e34a081ed81'
 
+if 'pipeline_versions' not in config:
+    config['pipeline_versions'] = {}
+
+if 'prefix' in config['pipeline_versions']:
+    local_src = os.path.normpath(config['pipeline_versions']['prefix'])
+else:
+    local_src = 'workflow/modules'
+
 DATASETS = [x for x in conf.keys()]
 BUILD = [get_build(conf, x) for x in DATASETS] # hg19 or hg38
 filter_dict = {x: conf[x].get('filters', '') for x in DATASETS}
@@ -209,10 +217,10 @@ config_impute['imputation']['default']['refpanel'] = 'topmed-r3'
 if not "outputs" in config_impute:
     config_impute["outputs"] = ['stat_report', 'vcf_bycohort']
 
-if 'pipeline_versions' not in config:
-    config['pipeline_versions'] = {}
 if 'imputePipeline' not in config['pipeline_versions']:
     config['pipeline_versions']['imputePipeline'] = 'b40c3521634334c801ed3381769ee8146b049f96'
+elif config['pipeline_versions']['imputePipeline'] == 'local':
+    config['pipeline_versions']['imputePipeline'] = os.path.join(local_src, 'imputePipeline')
 version_impute = config['pipeline_versions']['imputePipeline']
 
 if re.search(r'/', version_impute):
@@ -223,6 +231,9 @@ else:
         path="workflow/Snakefile", tag=version_impute)
 
 if 'postImpute' in config['pipeline_versions']:
+    if config['pipeline_versions']['postImpute'] == 'local':
+        config['pipeline_versions']['postImpute'] = os.path.join(local_src, 'postImpute')
+    else:
     config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
 
 if impute_datasets:
