@@ -58,8 +58,8 @@ def get_in(conf, dataset):
     else:
         return fname
 
-ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
-             "hg38": "reference/human_gatk_GRCh38.fasta"}
+ref_fasta = {"hg19": "resources/ref/human_g1k_hg19.fasta",
+             "hg38": "resources/ref/human_gatk_GRCh38.fasta"}
 
 tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
 tgbase_38 = ("https://storage.googleapis.com/" +
@@ -72,10 +72,6 @@ tgfasta = dict(
 def fasta_remote(wc):
     gbuild = wc.gbuild
     return HTTP.remote(tgfasta[gbuild])
-    # if gbuild == 'GRCh38':
-    #     return FTP.remote(tgfasta['GRCh38'], immediate_close=True)
-    # else:
-    #     return HTTP.remote(tgfasta[gbuild])
 
 def fasta_md5(wc):
     gbuild = wc.gbuild
@@ -91,6 +87,7 @@ input_type_dict = {x: get_intype(conf, x) for x in DATASETS}
 input_dict = {x: get_in(conf, x) for x in DATASETS}
 impute_datasets = [x for x in DATASETS if conf[x].get('impute', False)]
 impute_build = [conf[x]['build'] for x in DATASETS if conf[x].get('impute', False)]
+ADMIXTURE_REF = 'gnomad-hgdp-1kg'
 if len(impute_build) > 0:
     assert len(set(impute_build)) == 1, "There can only be one build for imputation"
     impute_build = impute_build[0]
@@ -111,13 +108,13 @@ wildcard_constraints:
 rule all:
     input:
         expand('results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html',
-               zip, admixstem=['gnomad-hgdp-1kg' for x in DATASETS], build=BUILD, cohort=DATASETS),
+               zip, admixstem=[ADMIXTURE_REF for x in DATASETS], build=BUILD, cohort=DATASETS),
 
 rule download_tg_fa:
     input: fasta_remote
     output:
-        "reference/human_{source}_{gbuild}.fasta",
-        "reference/human_{source}_{gbuild}.fasta.fai"
+        "resources/ref/human_{source}_{gbuild}.fasta",
+        "resources/ref/human_{source}_{gbuild}.fasta.fai"
     params:
         md5 = lambda wc: fasta_md5(wc)
     resources:
@@ -420,8 +417,8 @@ rule process_smap_1kg_hgdp:
     input:
         metadata = HTTP.remote("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
     output:
-        table = "reference_proc/hgdp_1kg.popdata.tsv.gz",
-        smap = "reference_proc/hgdp_1kg.smap"
+        table = "resources/ref/proc/hgdp_1kg.popdata.tsv.gz",
+        smap = "resources/ref/proc/hgdp_1kg.smap"
     threads: 1
     resources:
         mem_mb = 512,
@@ -432,7 +429,7 @@ rule process_smap_1kg_hgdp:
 
 rule ref_admixture_filter:
     input: "/sc/arion/projects/load/data-ark/Public_Unrestricted/gnomAD/3.1/vcfs/HGDP-1KG/gnomad.genomes.v3.1.2.hgdp_tgp.chr{chrom}.vcf.bgz"
-    output: temp('reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz')
+    output: temp('resources/ref/proc/{admixstem}.chr{chrom}.hg38.vcf.gz')
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
@@ -449,7 +446,7 @@ bcftools index -tf {output}
 
 rule ref_union_prune:
     input:
-        vcf = 'reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz',
+        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.{build}.vcf.gz',
         sample_vcf = rules.vcf_norm.output
     output: temp('intermediate/ref_pruned/by_chr/{admixstem}_pruned_{cohort}.chr{chrom}.{build}.vcf.gz')
     conda: "envs/bcftools.yaml"
