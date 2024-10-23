@@ -1,9 +1,20 @@
 from snakemake.utils import min_version
 min_version("7.0")
+configfile: "config/config.yaml"
 
 import re
-from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
-from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+
+# # check if running on minerva
+# import os
+# if os.path.exists('/sc/arion'):
+#     minerva = True
+# else:
+#     minerva = False
+# 
+# if minerva:
+#    shell.prefix('ml proxies; ')
+
+# Check for internet
 
 from urllib.request import urlopen
 from urllib.error import URLError
@@ -14,19 +25,72 @@ try:
 except URLError as ex:
     iconnect = False
 
-
-configfile: "config/config.yaml"
+iconnect = iconnect and not ('nointernet' in config and config['nointernet'])
 
 class dummyprovider:
     def remote(string_, allow_redirects="foo", immediate_close="bar"):
-        return string_
+        nohttp = string_.removeprefix("http://").removeprefix("https://")
+        noftp = nohttp.removeprefix("ftp://").removeprefix("ftps://")
+        return noftp
 
-if iconnect: # and not ('nointernet' in config and config['nointernet']):
-    FTP = FTPRemoteProvider()
-    HTTP = HTTPRemoteProvider()
+if snakemake.__version__.startswith("7."):
+    from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
+    from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+    H_ = HTTPRemoteProvider()
+    F_ = FTPRemoteProvider()
+
+    def strip_protocol(cls, string_, *args, **kwargs):
+        if string_.startswith("ftp://") or string_.startswith("ftps://"):
+            url = string_.removeprefix("ftp://").removeprefix("ftps://")
+        elif string_.startswith("http://") or string_.startswith("https://"):
+            url = string_.removeprefix("http://").removeprefix("https://")
+        else:
+            url = string_
+        return cls.remote(url, *args, **kwargs)
+
+    if iconnect:
+        class FTP:
+            @staticmethod
+            def remote(string_, *args, **kwargs):
+                return strip_protocol(F_, string_, *args, **kwargs)
+        class HTTP:
+            @staticmethod
+            def remote(string_, *args, **kwargs):
+                return strip_protocol(H_, string_, *args, **kwargs)
+    else:
+        FTP = dummyprovider
+        HTTP = dummyprovider
+    class storage:
+        @staticmethod
+        def ftp(string_, *args, **kwargs):
+            return FTP.remote(string_, *args, **kwargs)
+        @staticmethod
+        def http(string_, *args, **kwargs):
+            return HTTP.remote(string_, *args, **kwargs)
 else:
-    FTP = dummyprovider
-    HTTP = dummyprovider
+    if iconnect:
+        class FTP:
+            @staticmethod
+            def remote(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_startswith("ftp://") and not string_startswith("ftps://"):
+                    string_ = "ftp://" + string_
+                return storage.ftp(string_)
+        class HTTP:
+            @staticmethod
+            def remote(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_startswith("http://") and not string_startswith("https://"):
+                    string_ = "https://" + string_
+                return storage.http(string_)
+    else:
+        FTP = dummyprovider
+        HTTP = dummyprovider
+        class storage:
+            @staticmethod
+            def ftp(string_, *args, **kwargs):
+                return FTP.remote(string_, *args, **kwargs)
+            @staticmethod
+            def http(string_, *args, **kwargs):
+                return HTTP.remote(string_, *args, **kwargs)
 
 conf = config['datasets']
 
@@ -58,8 +122,8 @@ def get_in(conf, dataset):
     else:
         return fname
 
-ref_fasta = {"hg19": "reference/human_g1k_hg19.fasta",
-             "hg38": "reference/human_gatk_GRCh38.fasta"}
+ref_fasta = {"hg19": "resources/ref/human_g1k_hg19.fasta",
+             "hg38": "resources/ref/human_gatk_GRCh38.fasta"}
 
 tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
 tgbase_38 = ("https://storage.googleapis.com/" +
@@ -72,10 +136,6 @@ tgfasta = dict(
 def fasta_remote(wc):
     gbuild = wc.gbuild
     return HTTP.remote(tgfasta[gbuild])
-    # if gbuild == 'GRCh38':
-    #     return FTP.remote(tgfasta['GRCh38'], immediate_close=True)
-    # else:
-    #     return HTTP.remote(tgfasta[gbuild])
 
 def fasta_md5(wc):
     gbuild = wc.gbuild
@@ -84,6 +144,14 @@ def fasta_md5(wc):
     elif gbuild == 'hg19':
         return '45f81df94f0408d082363e34a081ed81'
 
+if 'pipeline_versions' not in config:
+    config['pipeline_versions'] = {}
+
+if 'prefix' in config['pipeline_versions']:
+    local_src = os.path.normpath(config['pipeline_versions']['prefix'])
+else:
+    local_src = 'workflow/modules'
+
 DATASETS = [x for x in conf.keys()]
 BUILD = [get_build(conf, x) for x in DATASETS] # hg19 or hg38
 filter_dict = {x: conf[x].get('filters', '') for x in DATASETS}
@@ -91,6 +159,7 @@ input_type_dict = {x: get_intype(conf, x) for x in DATASETS}
 input_dict = {x: get_in(conf, x) for x in DATASETS}
 impute_datasets = [x for x in DATASETS if conf[x].get('impute', False)]
 impute_build = [conf[x]['build'] for x in DATASETS if conf[x].get('impute', False)]
+ADMIXTURE_REF = 'gnomad-hgdp-1kg'
 if len(impute_build) > 0:
     assert len(set(impute_build)) == 1, "There can only be one build for imputation"
     impute_build = impute_build[0]
@@ -111,13 +180,13 @@ wildcard_constraints:
 rule all:
     input:
         expand('results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html',
-               zip, admixstem=['gnomad-hgdp-1kg' for x in DATASETS], build=BUILD, cohort=DATASETS),
+               zip, admixstem=[ADMIXTURE_REF for x in DATASETS], build=BUILD, cohort=DATASETS),
 
 rule download_tg_fa:
     input: fasta_remote
     output:
-        "reference/human_{source}_{gbuild}.fasta",
-        "reference/human_{source}_{gbuild}.fasta.fai"
+        "resources/ref/human_{source}_{gbuild}.fasta",
+        "resources/ref/human_{source}_{gbuild}.fasta.fai"
     params:
         md5 = lambda wc: fasta_md5(wc)
     resources:
@@ -212,10 +281,10 @@ config_impute['imputation']['default']['refpanel'] = 'topmed-r3'
 if not "outputs" in config_impute:
     config_impute["outputs"] = ['stat_report', 'vcf_bycohort']
 
-if 'pipeline_versions' not in config:
-    config['pipeline_versions'] = {}
 if 'imputePipeline' not in config['pipeline_versions']:
     config['pipeline_versions']['imputePipeline'] = 'b40c3521634334c801ed3381769ee8146b049f96'
+elif config['pipeline_versions']['imputePipeline'] == 'local':
+    config['pipeline_versions']['imputePipeline'] = os.path.join(local_src, 'imputePipeline')
 version_impute = config['pipeline_versions']['imputePipeline']
 
 if re.search(r'/', version_impute):
@@ -226,7 +295,10 @@ else:
         path="workflow/Snakefile", tag=version_impute)
 
 if 'postImpute' in config['pipeline_versions']:
-    config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
+    if config['pipeline_versions']['postImpute'] == 'local':
+        config['pipeline_versions']['postImpute'] = os.path.join(local_src, 'postImpute')
+    else:
+        config_impute['version_postImpute'] = config['pipeline_versions']['postImpute']
 
 if impute_datasets:
     module imputation:
@@ -420,8 +492,8 @@ rule process_smap_1kg_hgdp:
     input:
         metadata = HTTP.remote("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
     output:
-        table = "reference_proc/hgdp_1kg.popdata.tsv.gz",
-        smap = "reference_proc/hgdp_1kg.smap"
+        table = "resources/ref/proc/hgdp_1kg.popdata.tsv.gz",
+        smap = "resources/ref/proc/hgdp_1kg.smap"
     threads: 1
     resources:
         mem_mb = 512,
@@ -432,7 +504,7 @@ rule process_smap_1kg_hgdp:
 
 rule ref_admixture_filter:
     input: "/sc/arion/projects/load/data-ark/Public_Unrestricted/gnomAD/3.1/vcfs/HGDP-1KG/gnomad.genomes.v3.1.2.hgdp_tgp.chr{chrom}.vcf.bgz"
-    output: temp('reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz')
+    output: temp('resources/ref/proc/{admixstem}.chr{chrom}.hg38.vcf.gz')
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
@@ -447,9 +519,53 @@ sleep 5
 bcftools index -tf {output}
 '''
 
+## VCF liftover module
+liftover = {}
+liftover['inputs'] = {
+    ADMIXTURE_REF: {'input_vcf': f'resources/ref/proc/{ADMIXTURE_REF}.chr{{chrom}}.hg38.vcf.gz',
+        'build': 'b38',
+        'contigs': '1:22'}
+}
+liftover['output_builds'] = ['b37']
+liftover['all_GATK_builds'] = True
+liftover['concatenate'] = False
+liftover['liftover_outdir'] = "resources/ref/lifted"
+
+if 'vcf_liftover' not in config['pipeline_versions']:
+    config['pipeline_versions']['vcf_liftover'] = '3aed94604072cca8ce6fd2245ee4710cb6aa8924'
+elif config['pipeline_versions']['vcf_liftover'] == 'local':
+    config['pipeline_versions']['vcf_liftover'] = os.path.join(local_src, 'vcf_liftover')
+version_vcf_liftover = config['pipeline_versions']['vcf_liftover']
+
+if re.search(r'/', version_vcf_liftover):
+    sfile_vcf_liftover = os.path.join(
+      os.path.abspath(version_vcf_liftover), 'workflow', 'Snakefile')
+else:
+    sfile_vcf_liftover = github('marcoralab/vcf_liftover',
+        path='workflow/Snakefile', tag=version_vcf_liftover)
+
+module vcf_liftover:
+    snakefile: sfile_vcf_liftover
+    config: liftover
+
+use rule * from vcf_liftover as liftref_*
+
+rule ref_link_lifted:
+    input:
+        vcf = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz',
+        tbi = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz.tbi'
+    output:
+        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz',
+        tbi = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz.tbi'
+    localrule: True
+    shell: '''
+ln -rs {input.vcf} {output.vcf}
+ln -rs {input.tbi} {output.tbi}
+'''
+
 rule ref_union_prune:
     input:
-        vcf = 'reference_proc/{admixstem}.chr{chrom}.b38.vcf.gz',
+        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.{build}.vcf.gz',
         sample_vcf = rules.vcf_norm.output
     output: temp('intermediate/ref_pruned/by_chr/{admixstem}_pruned_{cohort}.chr{chrom}.{build}.vcf.gz')
     conda: "envs/bcftools.yaml"
@@ -466,6 +582,7 @@ bcftools view -R {input.sample_vcf} --regions-overlap 2 {input.vcf} | \
 rule ref_admixture_cat:
     input: expand('intermediate/ref_pruned/by_chr/{{admixstem}}_pruned_{{cohort}}.chr{chrom}.{{build}}.vcf.gz', chrom=range(1, 23))
     output: temp('intermediate/ref_pruned/{admixstem}_pruned_{cohort}.{build}.vcf.gz')
+    conda: "envs/bcftools.yaml"
     threads: 1
     resources:
         mem_mb = 256,

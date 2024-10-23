@@ -22,6 +22,10 @@ library(sf)
 library(ggforce)
 library(ggrepel)
 
+projpaths <- sf_proj_search_paths() |>
+  (\(x) x[dir.exists(x)])() |>
+  sf_proj_search_paths()
+
 if (exists("snakemake")) {
   load(snakemake@input[[1]])
 } else {
@@ -105,17 +109,16 @@ plot_admix <- function(x, by = cluster_cols, poplabel = TRUE) {
     geom_bar(position = "fill", stat = "identity", width = 1) +
     theme_classic() +
     labs(x = "Individual", y = "Global Ancestry", color = "Cluster") +
-    theme(
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank(),
-      axis.title.y = element_blank(),
-      axis.title.x = element_blank(),
-      panel.grid.major.x = element_blank(),
-      strip.text.x = element_text(angle = stripangle))
+    theme(axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.title.x = element_blank(),
+          panel.grid.major.x = element_blank(),
+          strip.text.x = element_text(angle = stripangle))
   if (poplabel) {
     plt + ggh4x::facet_nested(~ spop + pop, switch = "x",
                               scales = "free", space = "free")
-  } else if(!all(is.na(x$spop))) {
+  } else if (!all(is.na(x$spop))) {
     plt + facet_grid(~ spop, switch = "x",
                      scales = "free", space = "free")
   } else {
@@ -129,15 +132,14 @@ plot_map <- function(df_pop, seed, force_push = 1000000, force_pull = 10) {
                         xlimit = c(-Inf, Inf), ylimit = c(-Inf, Inf),
                         force_push = 1, force_pull = 1, maxiter = 200000) {
 
-    boxdf <- tibble(
-      x1 = df[[xcol]] - (size_x / 2),
-      y1 = df[[ycol]] - (size_y / 2),
-      x2 = df[[xcol]] + (size_x / 2),
-      y2 = df[[ycol]] + (size_y / 2))
+    boxdf <- tibble(x1 = df[[xcol]] - (size_x / 2),
+                    y1 = df[[ycol]] - (size_y / 2),
+                    x2 = df[[xcol]] + (size_x / 2),
+                    y2 = df[[ycol]] + (size_y / 2))
 
     boxmatrix <- as.matrix(boxdf)
 
-    pointmatrix <- df[c(xcol,ycol)] |>
+    pointmatrix <- df[c(xcol, ycol)] |>
       as.matrix()
 
     ggrepel:::repel_boxes2(data_points = pointmatrix,
@@ -206,9 +208,9 @@ plot_map <- function(df_pop, seed, force_push = 1000000, force_pull = 10) {
           r = pie_radius(n), amount = amount, fill = cluster),
       stat = "pie", color = NA) +
     geom_circle(aes(x0 = x_moved, y0 = y_moved, r = pie_radius(n)),
-                fill = NA, color = "black", size = 0.2) +
+                fill = NA, color = "black", linewidth = 0.2) +
     geom_circle(aes(x0 = x_moved, y0 = y_moved, r = pie_radius_inner(n)),
-                fill = NA, color = "black", size = 0.2) +
+                fill = NA, color = "black", linewidth = 0.2) +
     theme_classic() +
     coord_sf(expand = FALSE) +
     ggtitle("Map of average cluster proportions in each population") + 
@@ -217,7 +219,7 @@ plot_map <- function(df_pop, seed, force_push = 1000000, force_pull = 10) {
 ```
 
 ```{r filter_ref, include=FALSE}
-admix_noref <- filter(out_admix, partition != "sample")
+admix_ref <- filter(out_admix, partition != "sample")
 ```
 
 ## Reference plots
@@ -225,13 +227,13 @@ admix_noref <- filter(out_admix, partition != "sample")
 Below is a plot of the cluster proportions for all individuals who were assigned a superpopulation in gnomAD. The original superpopulation and population labels are used here.
 
 ```{r cplot_unfilt_pop1, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
-admix_noref |>
+admix_ref |>
   filter(genetic_region %in% c("AFR", "AMR", "EUR")) |>
   plot_admix() + ggtitle("Admixture Plot by Cluster (AFR, AMR and EUR)")
 ```
 
 ```{r cplot_unfilt_pop2, echo=FALSE, fig.height=7, fig.width=16, message=FALSE, warning=FALSE}
-admix_noref |>
+admix_ref |>
   filter(!(genetic_region %in% c("AFR", "AMR", "EUR"))) |>
   plot_admix() + ggtitle("Admixture Plot by Cluster (not AFR, AMR or EUR)")
 ```
@@ -241,7 +243,7 @@ This is a map of average cluster proportions in each population:
 ```{r map, echo=FALSE, fig.width = 14, fig.height = 7.5, warning = FALSE, cache = TRUE}
 world <- ne_countries(scale = "medium", returnclass = "sf")
 
-plt <- plot_map(admix_noref, 1007)
+plt <- plot_map(admix_ref, 1007)
 
 plt
 ```
@@ -256,7 +258,7 @@ filter_output <- \(tbl, max_prop) {
            max_spop_prop >= max_prop)
 }
 
-admix_noref |>
+admix_ref |>
   filter_output(0) |>
   plot_admix(by = superpops, poplabel = FALSE) +
   ggtitle("Admixture Plot by Continental Ancestry (no admixture filter)")
