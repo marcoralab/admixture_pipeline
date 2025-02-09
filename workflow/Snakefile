@@ -347,7 +347,8 @@ rule plink_vcf:
         out = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}.plink_contigs"
     threads: 48
     resources:
-        mem_mb = 4000,
+        #mem_mb = 4000,
+        mem_mb = 192000,
         time_min = 1440
     conda: "envs/plink2.yaml"
     shell:
@@ -364,7 +365,8 @@ rule rename_vcf:
     output: temp("intermediate/cohort_proc/{cohort}.{build}.from{inputtype}.vcf.gz")
     threads: 4
     resources:
-        mem_mb = 2048,
+        #mem_mb = 2048,
+        mem_mb = 8192,
         time_min = 2880
     conda: "envs/bcftools.yaml"
     shell:
@@ -478,7 +480,8 @@ rule vcf_norm:
     conda: "envs/bcftools.yaml"
     threads: 3
     resources:
-        mem_mb = 1024,
+        #mem_mb = 1024,
+        mem_mb = 3072,
         time_min = 8600
     shell:
         """
@@ -508,7 +511,8 @@ rule ref_admixture_filter:
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
-        mem_mb = 2048,
+        #mem_mb = 2048,
+        mem_mb = 8192,
         time_min = 360
     shell:
         '''
@@ -644,7 +648,8 @@ rule cohort_merge:
     conda: "envs/bcftools.yaml"
     threads: 7
     resources:
-        mem_mb = 2048,
+        #mem_mb = 2048,
+        mem_mb = 14336,
         time_min = 360
     shell:
         '''
@@ -662,7 +667,8 @@ rule ref_refilter:
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
-        mem_mb = 2048,
+        #mem_mb = 2048,
+        mem_mb = 8192,
         time_min = 360
     shell:
         '''
@@ -724,7 +730,8 @@ rule admixture:
     log: 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.log'
     threads: 40
     resources:
-        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        #mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        mem_mb = 204800,
         time_min = 1440 # 24 hours. Should take <= 14 hours
     container: 'docker://befh/r_env_gwasamplefilt:5'
     shell:
@@ -748,7 +755,8 @@ rule admixture_project:
     log: 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.log'
     threads: 40
     resources:
-        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        #mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
+        mem_mb = 204800,
         time_min = 1440 # 24 hours. Should take <= 14 hours
     container: 'docker://befh/r_env_gwasamplefilt:5'
     shell:
