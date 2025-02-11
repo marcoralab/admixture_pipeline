@@ -416,7 +416,11 @@ if [[ -z "${{filt// }}" ]]; then
 else
   bcftools view {params.filt} -Oz -o {output.vcf} {input}
 fi
-bcftools index -t {output.vcf}
+if ! bcftools index -t {output.vcf}; then
+  echo VCF may be unsorted. Sorting and trying again 1>&2
+  bcftools sort -Oz -o {output.vcf} {input}
+  bcftools index -t {output.vcf}
+fi
 '''
 
 rule vcf_presplit:
