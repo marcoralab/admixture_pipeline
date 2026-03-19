@@ -1,5 +1,5 @@
 from snakemake.utils import min_version
-min_version("7.0")
+min_version("8.0")
 configfile: "config/config.yaml"
 
 import re
@@ -27,70 +27,31 @@ except URLError as ex:
 
 iconnect = iconnect and not ('nointernet' in config and config['nointernet'])
 
-class dummyprovider:
-    def remote(string_, allow_redirects="foo", immediate_close="bar"):
+if iconnect:
+    class storage_:
+        @staticmethod
+        def ftp(string_, allow_redirects="foo", immediate_close="bar"):
+            if not string_.startswith("ftp://") and not string_.startswith("ftps://"):
+                string_ = "ftp://" + string_
+            return storage.ftp(string_)
+        @staticmethod
+        def http(string_, allow_redirects="foo", immediate_close="bar"):
+            if not string_.startswith("http://") and not string_.startswith("https://"):
+                string_ = "https://" + string_
+            return storage.http(string_)
+else:
+    #override storage
+    def rem_proto(string_, allow_redirects="foo", immediate_close="bar"):
         nohttp = string_.removeprefix("http://").removeprefix("https://")
         noftp = nohttp.removeprefix("ftp://").removeprefix("ftps://")
         return noftp
-
-if snakemake.__version__.startswith("7."):
-    from snakemake.remote.FTP import RemoteProvider as FTPRemoteProvider
-    from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
-    H_ = HTTPRemoteProvider()
-    F_ = FTPRemoteProvider()
-
-    def strip_protocol(cls, string_, *args, **kwargs):
-        if string_.startswith("ftp://") or string_.startswith("ftps://"):
-            url = string_.removeprefix("ftp://").removeprefix("ftps://")
-        elif string_.startswith("http://") or string_.startswith("https://"):
-            url = string_.removeprefix("http://").removeprefix("https://")
-        else:
-            url = string_
-        return cls.remote(url, *args, **kwargs)
-
-    if iconnect:
-        class FTP:
-            @staticmethod
-            def remote(string_, *args, **kwargs):
-                return strip_protocol(F_, string_, *args, **kwargs)
-        class HTTP:
-            @staticmethod
-            def remote(string_, *args, **kwargs):
-                return strip_protocol(H_, string_, *args, **kwargs)
-    else:
-        FTP = dummyprovider
-        HTTP = dummyprovider
-    class storage:
+    class storage_:
         @staticmethod
         def ftp(string_, *args, **kwargs):
-            return FTP.remote(string_, *args, **kwargs)
+            return rem_proto(string_, *args, **kwargs)
         @staticmethod
         def http(string_, *args, **kwargs):
-            return HTTP.remote(string_, *args, **kwargs)
-else:
-    if iconnect:
-        class FTP:
-            @staticmethod
-            def remote(string_, allow_redirects="foo", immediate_close="bar"):
-                if not string_startswith("ftp://") and not string_startswith("ftps://"):
-                    string_ = "ftp://" + string_
-                return storage.ftp(string_)
-        class HTTP:
-            @staticmethod
-            def remote(string_, allow_redirects="foo", immediate_close="bar"):
-                if not string_startswith("http://") and not string_startswith("https://"):
-                    string_ = "https://" + string_
-                return storage.http(string_)
-    else:
-        FTP = dummyprovider
-        HTTP = dummyprovider
-        class storage:
-            @staticmethod
-            def ftp(string_, *args, **kwargs):
-                return FTP.remote(string_, *args, **kwargs)
-            @staticmethod
-            def http(string_, *args, **kwargs):
-                return HTTP.remote(string_, *args, **kwargs)
+            return rem_proto(string_, *args, **kwargs)
 
 conf = config['datasets']
 
@@ -135,7 +96,7 @@ tgfasta = dict(
 
 def fasta_remote(wc):
     gbuild = wc.gbuild
-    return HTTP.remote(tgfasta[gbuild])
+    return storage_.http(tgfasta[gbuild])
 
 def fasta_md5(wc):
     gbuild = wc.gbuild
@@ -175,7 +136,8 @@ build_dict = dict_settings(BUILD)
 
 wildcard_constraints:
     build='hg(19|38)',
-    #cohort='|'.join(DATASETS)
+    cohort='|'.join(DATASETS)
+
 
 rule all:
     input:
@@ -347,8 +309,8 @@ rule plink_vcf:
         out = "intermediate/cohort_proc/{cohort}.{build}.from{inputtype}.plink_contigs"
     threads: 48
     resources:
-        mem_mb = 4000,
-        time_min = 1440
+        mem = '192G',
+        runtime = '1d'
     conda: "envs/plink2.yaml"
     shell:
         '''
@@ -364,8 +326,8 @@ rule rename_vcf:
     output: temp("intermediate/cohort_proc/{cohort}.{build}.from{inputtype}.vcf.gz")
     threads: 4
     resources:
-        mem_mb = 2048,
-        time_min = 2880
+        mem = '8G',
+        runtime = '2d'
     conda: "envs/bcftools.yaml"
     shell:
         '''
@@ -482,8 +444,8 @@ rule vcf_norm:
     conda: "envs/bcftools.yaml"
     threads: 3
     resources:
-        mem_mb = 1024,
-        time_min = 8600
+        mem = '4G',
+        runtime = '1d'
     shell:
         """
 bcftools norm -d none -f {input.fasta} {input.vcf} | \
@@ -494,7 +456,7 @@ bcftools index -tf {output}
 
 rule process_smap_1kg_hgdp:
     input:
-        metadata = HTTP.remote("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
+        metadata = storage_.http("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
     output:
         table = "resources/ref/proc/hgdp_1kg.popdata.tsv.gz",
         smap = "resources/ref/proc/hgdp_1kg.smap"
@@ -512,8 +474,8 @@ rule ref_admixture_filter:
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
-        mem_mb = 2048,
-        time_min = 360
+        mem = '8G',
+        runtime = '6h'
     shell:
         '''
 bcftools filter -i 'FILTER="PASS" && INFO/AF[0] >= 0.05 && INFO/AF[0] <= 0.95 && F_MISSING < 0.05' {input} | \
@@ -666,8 +628,8 @@ rule ref_refilter:
     conda: "envs/bcftools.yaml"
     threads: 4
     resources:
-        mem_mb = 2048,
-        time_min = 360
+        mem = '14G',
+        runtime = '6h'
     shell:
         '''
 bcftools view -R {input.merge_vcf} --regions-overlap 2 \
@@ -726,10 +688,10 @@ rule admixture:
         Q = 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.Q',
         P = 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.P'
     log: 'results/admixture_ref/{admixstem}_pruned_{cohort}.{build}.12.log'
-    threads: 40
+    threads: 64
     resources:
-        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
-        time_min = 1440 # 24 hours. Should take <= 14 hours
+        mem = '300G', # Very efficient memory usage. Previous run used 2936 MB
+        time = '96h' # 24 hours. Should take <= 14 hours
     container: 'docker://befh/r_env_gwasamplefilt:5'
     shell:
         '''
@@ -750,10 +712,10 @@ rule admixture_project:
         Q = 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.Q',
         P = 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.P'
     log: 'results/admixture_samp/{cohort}_merged_{admixstem}.{build}.12.log'
-    threads: 40
+    threads: 64
     resources:
-        mem_mb = 5120, # Very efficient memory usage. Previous run used 2936 MB
-        time_min = 1440 # 24 hours. Should take <= 14 hours
+        mem = '200G', # Very efficient memory usage. Previous run used 2936 MB
+        runtime = '96h' # 24 hours. Should take <= 14 hours
     container: 'docker://befh/r_env_gwasamplefilt:5'
     shell:
         '''
