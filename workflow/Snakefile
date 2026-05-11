@@ -61,15 +61,15 @@ if download_resources:
     tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
     tgbase_38 = ("https://storage.googleapis.com/" +
                  "gcp-public-data--broad-references/hg38/v0/")
-    
+
     tgfasta = dict(
         hg19=(tgbase + "technical/reference/human_g1k_v37.fasta.gz"),
         GRCh38=(tgbase_38 + 'Homo_sapiens_assembly38.fasta'))
-    
+
     def fasta_remote(wc):
         gbuild = wc.gbuild
         return storage_.http(tgfasta[gbuild])
-    
+
     def fasta_md5(wc):
         gbuild = wc.gbuild
         if gbuild == 'GRCh38':
