@@ -3,6 +3,7 @@ min_version("8.0")
 configfile: "config/config.yaml"
 
 import re
+from pathlib import Path
 
 # # check if running on minerva
 # import os
@@ -19,39 +20,62 @@ import re
 from urllib.request import urlopen
 from urllib.error import URLError
 
-try:
-    response = urlopen('https://www.google.com/', timeout=10)
-    iconnect = True
-except URLError as ex:
-    iconnect = False
+dir_resources = str(Path(config.get("resource_dir", "resources")))
+download_resources = dir_resources == "resources"
 
-iconnect = iconnect and not ('nointernet' in config and config['nointernet'])
-
-if iconnect:
-    class storage_:
-        @staticmethod
-        def ftp(string_, allow_redirects="foo", immediate_close="bar"):
-            if not string_.startswith("ftp://") and not string_.startswith("ftps://"):
-                string_ = "ftp://" + string_
-            return storage.ftp(string_)
-        @staticmethod
-        def http(string_, allow_redirects="foo", immediate_close="bar"):
-            if not string_.startswith("http://") and not string_.startswith("https://"):
-                string_ = "https://" + string_
-            return storage.http(string_)
-else:
-    #override storage
-    def rem_proto(string_, allow_redirects="foo", immediate_close="bar"):
-        nohttp = string_.removeprefix("http://").removeprefix("https://")
-        noftp = nohttp.removeprefix("ftp://").removeprefix("ftps://")
-        return noftp
-    class storage_:
-        @staticmethod
-        def ftp(string_, *args, **kwargs):
-            return rem_proto(string_, *args, **kwargs)
-        @staticmethod
-        def http(string_, *args, **kwargs):
-            return rem_proto(string_, *args, **kwargs)
+if download_resources:
+    try:
+        response = urlopen('https://www.google.com/', timeout=10)
+        iconnect = True
+    except URLError as ex:
+        iconnect = False
+    
+    iconnect = iconnect and not ('nointernet' in config and config['nointernet'])
+    
+    if iconnect:
+        class storage_:
+            @staticmethod
+            def ftp(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_.startswith("ftp://") and not string_.startswith("ftps://"):
+                    string_ = "ftp://" + string_
+                return storage.ftp(string_)
+            @staticmethod
+            def http(string_, allow_redirects="foo", immediate_close="bar"):
+                if not string_.startswith("http://") and not string_.startswith("https://"):
+                    string_ = "https://" + string_
+                return storage.http(string_)
+    else:
+        #override storage
+        def rem_proto(string_, allow_redirects="foo", immediate_close="bar"):
+            nohttp = string_.removeprefix("http://").removeprefix("https://")
+            noftp = nohttp.removeprefix("ftp://").removeprefix("ftps://")
+            return noftp
+        class storage_:
+            @staticmethod
+            def ftp(string_, *args, **kwargs):
+                return rem_proto(string_, *args, **kwargs)
+            @staticmethod
+            def http(string_, *args, **kwargs):
+                return rem_proto(string_, *args, **kwargs)
+    
+    tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
+    tgbase_38 = ("https://storage.googleapis.com/" +
+                 "gcp-public-data--broad-references/hg38/v0/")
+    
+    tgfasta = dict(
+        hg19=(tgbase + "technical/reference/human_g1k_v37.fasta.gz"),
+        GRCh38=(tgbase_38 + 'Homo_sapiens_assembly38.fasta'))
+    
+    def fasta_remote(wc):
+        gbuild = wc.gbuild
+        return storage_.http(tgfasta[gbuild])
+    
+    def fasta_md5(wc):
+        gbuild = wc.gbuild
+        if gbuild == 'GRCh38':
+            return '7ff134953dcca8c8997453bbb80b6b5e'
+        elif gbuild == 'hg19':
+            return '45f81df94f0408d082363e34a081ed81'
 
 conf = config['datasets']
 
@@ -83,27 +107,8 @@ def get_in(conf, dataset):
     else:
         return fname
 
-ref_fasta = {"hg19": "resources/ref/human_g1k_hg19.fasta",
-             "hg38": "resources/ref/human_gatk_GRCh38.fasta"}
-
-tgbase = "http://ftp-trace.ncbi.nih.gov/1000genomes/ftp/"
-tgbase_38 = ("https://storage.googleapis.com/" +
-             "gcp-public-data--broad-references/hg38/v0/")
-
-tgfasta = dict(
-    hg19=(tgbase + "technical/reference/human_g1k_v37.fasta.gz"),
-    GRCh38=(tgbase_38 + 'Homo_sapiens_assembly38.fasta'))
-
-def fasta_remote(wc):
-    gbuild = wc.gbuild
-    return storage_.http(tgfasta[gbuild])
-
-def fasta_md5(wc):
-    gbuild = wc.gbuild
-    if gbuild == 'GRCh38':
-        return '7ff134953dcca8c8997453bbb80b6b5e'
-    elif gbuild == 'hg19':
-        return '45f81df94f0408d082363e34a081ed81'
+ref_fasta = {"hg19": dir_resources + "/ref/human_g1k_hg19.fasta",
+             "hg38": dir_resources + "/ref/human_gatk_GRCh38.fasta"}
 
 if 'pipeline_versions' not in config:
     config['pipeline_versions'] = {}
@@ -144,21 +149,22 @@ rule all:
         expand('results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.html',
                zip, admixstem=[ADMIXTURE_REF for x in DATASETS], build=BUILD, cohort=DATASETS),
 
-rule download_tg_fa:
-    input: fasta_remote
-    output:
-        "resources/ref/human_{source}_{gbuild}.fasta",
-        "resources/ref/human_{source}_{gbuild}.fasta.fai"
-    params:
-        md5 = lambda wc: fasta_md5(wc)
-    resources:
-        mem_mb = 10000,
-        time_min = 30
-    conda: 'envs/bcftools.yaml'
-    #cache: True
-    localrule: True
-    shell:
-        '''
+if download_resources:
+    rule download_tg_fa:
+        input: fasta_remote
+        output:
+            "resources/ref/human_{source}_{gbuild}.fasta",
+            "resources/ref/human_{source}_{gbuild}.fasta.fai"
+        params:
+            md5 = lambda wc: fasta_md5(wc)
+        resources:
+            mem_mb = 10000,
+            time_min = 30
+        conda: 'envs/bcftools.yaml'
+        #cache: True
+        localrule: True
+        shell:
+            '''
 md5sum -c <(echo {params.md5} {input[0]})
 if [[ "{input[0]}" == *.gz ]]; then
   zcat {input[0]} > {output[0]} && rstatus=0 || rstatus=$?; true
@@ -454,30 +460,31 @@ sleep 5
 bcftools index -tf {output}
 """
 
-rule process_smap_1kg_hgdp:
-    input:
-        metadata = storage_.http("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz")
-    output:
-        table = "resources/ref/proc/hgdp_1kg.popdata.tsv.gz",
-        smap = "resources/ref/proc/hgdp_1kg.smap"
-    threads: 1
-    resources:
-        mem_mb = 512,
-        time_min = 5
-    container: 'docker://befh/r_procadmix:v1'
-    script: 'scripts/rule_process_smap_1kg_hgdp.R'
+if download_resources:
+    rule process_smap_1kg_hgdp:
+        input:
+            metadata = ancient(storage_.http("storage.googleapis.com/gcp-public-data--gnomad/release/3.1.2/vcf/genomes/gnomad.genomes.v3.1.2.hgdp_1kg_subset_sample_meta.tsv.bgz"))
+        output:
+            table = "resources/ref/proc/hgdp_1kg.popdata.tsv.gz",
+            smap = "resources/ref/proc/hgdp_1kg.smap"
+        threads: 1
+        resources:
+            mem_mb = 512,
+            time_min = 5
+        container: 'docker://befh/r_procadmix:v1'
+        script: 'scripts/rule_process_smap_1kg_hgdp.R'
 
 
-rule ref_admixture_filter:
-    input: "/sc/arion/projects/load/data-ark/Public_Unrestricted/gnomAD/3.1/vcfs/HGDP-1KG/gnomad.genomes.v3.1.2.hgdp_tgp.chr{chrom}.vcf.bgz"
-    output: temp('resources/ref/proc/{admixstem}.chr{chrom}.hg38.vcf.gz')
-    conda: "envs/bcftools.yaml"
-    threads: 4
-    resources:
-        mem = '8G',
-        runtime = '6h'
-    shell:
-        '''
+    rule ref_admixture_filter:
+        input: "/sc/arion/projects/load/data-ark/Public_Unrestricted/gnomAD/3.1/vcfs/HGDP-1KG/gnomad.genomes.v3.1.2.hgdp_tgp.chr{chrom}.vcf.bgz"
+        output: 'resources/ref/proc/{admixstem}.chr{chrom}.hg38.vcf.gz'
+        conda: "envs/bcftools.yaml"
+        threads: 4
+        resources:
+            mem = '8G',
+            runtime = '6h'
+        shell:
+            '''
 bcftools filter -i 'FILTER="PASS" && INFO/AF[0] >= 0.05 && INFO/AF[0] <= 0.95 && F_MISSING < 0.05' {input} | \
   bcftools annotate -x 'INFO,^FORMAT/GT' | \
   bcftools view --types snps -Oz -o {output}
@@ -516,22 +523,23 @@ module vcf_liftover:
 
 use rule * from vcf_liftover as liftref_*
 
-rule ref_link_lifted:
-    input:
-        vcf = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz',
-        tbi = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz.tbi'
-    output:
-        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz',
-        tbi = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz.tbi'
-    localrule: True
-    shell: '''
+if download_resources:
+    rule ref_link_lifted:
+        input:
+            vcf = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz',
+            tbi = 'resources/ref/lifted/{admixstem}.b37.chr{chrom}_only.vcf.gz.tbi'
+        output:
+            vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz',
+            tbi = 'resources/ref/proc/{admixstem}.chr{chrom}.hg19.vcf.gz.tbi'
+        localrule: True
+        shell: '''
 ln -rs {input.vcf} {output.vcf}
 ln -rs {input.tbi} {output.tbi}
 '''
 
 rule ref_union_prune:
     input:
-        vcf = 'resources/ref/proc/{admixstem}.chr{chrom}.{build}.vcf.gz',
+        vcf = dir_resources + '/ref/proc/{admixstem}.chr{chrom}.{build}.vcf.gz',
         sample_vcf = rules.vcf_norm.output
     output: temp('intermediate/ref_pruned/by_chr/{admixstem}_pruned_{cohort}.chr{chrom}.{build}.vcf.gz')
     conda: "envs/bcftools.yaml"
@@ -740,7 +748,7 @@ rule process_admixture:
         q_samp = rules.admixture_project.output.Q,
         fam_samp = 'intermediate/cohort_pruned/{cohort}_merged_{admixstem}.{build}.fam',
         fam_samp_orig = fam_samp_orig,
-        pops = rules.process_smap_1kg_hgdp.output.table
+        pops = dir_resources + "/ref/proc/hgdp_1kg.popdata.tsv.gz"
     output:
         rda = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.rda",
         anc = "results/admixture_cohort-{cohort}_ref-{admixstem}.{build}.tsv"

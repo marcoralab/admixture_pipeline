@@ -5,6 +5,11 @@ pipeline_versions:
   imputePipeline: b40c3521634334c801ed3381769ee8146b049f96
   # postImpute: /some/local/path
 
+# Uncomment the following and point to a local path with reusable resources if you have one
+# You can copy the resources directory after the first run in most cases.
+# If you run with a different build, you will have to add to the directory
+#resource_dir: /sc/arion/projects/load/etc/pipeline_resources/admixture_pipeline
+
 indir: "/some/directory"
 datasets:
   # BioMe_array-regeneron_GSA:
